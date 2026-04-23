@@ -41,6 +41,45 @@ body {
     background: var(--bg);
     color: var(--text);
     min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+.app-body {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+#sidebar {
+    width: 260px;
+    min-width: 260px;
+    background: var(--bg-surface);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 0;
+}
+#sidebar h3 {
+    padding: 12px 16px 8px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+}
+.project-item {
+    padding: 8px 16px;
+    cursor: pointer;
+    font-size: 13px;
+    border-left: 3px solid transparent;
+    transition: all 0.1s;
+}
+.project-item:hover { background: var(--bg-highlight); }
+.project-item.active { background: var(--bg-highlight); border-left-color: var(--accent); color: var(--accent); }
+.project-item .proj-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-item .proj-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.main-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
 header {
     background: var(--bg-surface);
@@ -212,14 +251,21 @@ input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
     <h1>&gt;_ Claude Sessions Manager</h1>
     <div class="stats" id="stats"></div>
 </header>
+<div class="app-body">
+<div id="sidebar">
+    <h3>Projects</h3>
+    <div id="project-list"></div>
+</div>
+<div class="main-content">
 <div class="controls">
-    <input type="text" id="filter" placeholder="Filter by project, topic, branch...">
+    <input type="text" id="filter" placeholder="Filter by topic, branch...">
     <div id="bulk-actions">
         <span id="bulk-count">0 selected</span>
         <button class="btn btn-danger btn-sm" onclick="bulkDelete()">Delete Selected</button>
     </div>
     <button class="btn" onclick="refresh()">Refresh</button>
 </div>
+<div style="flex:1;overflow:auto">
 <table>
     <thead>
         <tr>
@@ -263,18 +309,61 @@ input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
 </div>
 
 <div class="toast" id="toast"></div>
+</div><!-- /table wrapper -->
+</div><!-- /main-content -->
+</div><!-- /app-body -->
 
 <script>
 let sessions = [];
 let sortKey = 'date';
 let sortReverse = true;
 let selected = new Set();
+let selectedProject = '__all__';
 
 async function fetchSessions() {
     const resp = await fetch('/api/sessions');
     const data = await resp.json();
     sessions = data.sessions;
     updateStats(data.stats);
+    renderSidebar();
+    renderTable();
+}
+
+function renderSidebar() {
+    const projects = {};
+    sessions.forEach(s => {
+        if (!projects[s.project_path]) projects[s.project_path] = { count: 0, size: 0, active: 0 };
+        projects[s.project_path].count++;
+        projects[s.project_path].size += s.total_size;
+        if (s.is_active) projects[s.project_path].active++;
+    });
+    const sorted = Object.entries(projects).sort((a, b) => b[1].size - a[1].size);
+    const container = document.getElementById('project-list');
+    let html = `<div class="project-item ${selectedProject === '__all__' ? 'active' : ''}" onclick="selectProject('__all__')">
+        <span class="proj-name">All Projects</span>
+        <span class="proj-meta">${sessions.length} sessions, ${formatSize(sessions.reduce((a,s) => a + s.total_size, 0))}</span>
+    </div>`;
+    sorted.forEach(([path, info]) => {
+        const active = selectedProject === path ? ' active' : '';
+        const marker = info.active > 0 ? ' <span style="color:var(--green)">*</span>' : '';
+        html += `<div class="project-item${active}" onclick="selectProject('${escapeHtml(path)}')">
+            <span class="proj-name">${escapeHtml(shortProject(path))}${marker}</span>
+            <span class="proj-meta">${info.count} sessions, ${formatSize(info.size)}</span>
+        </div>`;
+    });
+    container.innerHTML = html;
+}
+
+function formatSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+    if (bytes < 1024*1024*1024) return (bytes/(1024*1024)).toFixed(1) + ' MB';
+    return (bytes/(1024*1024*1024)).toFixed(1) + ' GB';
+}
+
+function selectProject(path) {
+    selectedProject = path;
+    renderSidebar();
     renderTable();
 }
 
@@ -289,8 +378,11 @@ function updateStats(stats) {
 function getFiltered() {
     const ft = document.getElementById('filter').value.toLowerCase();
     let filtered = sessions;
+    if (selectedProject !== '__all__') {
+        filtered = filtered.filter(s => s.project_path === selectedProject);
+    }
     if (ft) {
-        filtered = sessions.filter(s =>
+        filtered = filtered.filter(s =>
             s.project_path.toLowerCase().includes(ft) ||
             s.first_message.toLowerCase().includes(ft) ||
             s.last_user_message.toLowerCase().includes(ft) ||

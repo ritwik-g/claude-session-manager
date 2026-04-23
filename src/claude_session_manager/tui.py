@@ -1,11 +1,12 @@
 """Textual TUI for managing Claude Code sessions."""
 
+from collections import defaultdict
 from pathlib import Path
 
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.containers import Container, Horizontal, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import (
     DataTable,
@@ -13,15 +14,31 @@ from textual.widgets import (
     Header,
     Input,
     Label,
+    ListItem,
+    ListView,
     Static,
 )
 
 from .session_manager import (
     SessionInfo,
+    _format_size,
     delete_session,
     discover_sessions,
     get_summary_stats,
 )
+
+ALL_PROJECTS = "__all__"
+
+
+def _short_project(path: str) -> str:
+    """Shorten project path for display."""
+    home = str(Path.home())
+    if path.startswith(home):
+        path = "~" + path[len(home):]
+    parts = path.split("/")
+    if len(parts) > 4:
+        return "/".join(parts[:2]) + "/.../" + "/".join(parts[-2:])
+    return path
 
 
 class ConfirmDeleteScreen(ModalScreen[bool]):
@@ -42,9 +59,6 @@ class ConfirmDeleteScreen(ModalScreen[bool]):
     #confirm-dialog Label {
         width: 100%;
         margin-bottom: 1;
-    }
-    #confirm-dialog .detail {
-        color: $text-muted;
     }
     #confirm-buttons {
         width: 100%;
@@ -110,10 +124,6 @@ class SessionDetailScreen(ModalScreen):
     }
     #detail-dialog Label {
         width: 100%;
-    }
-    .detail-header {
-        text-style: bold;
-        margin-top: 1;
     }
     """
 
@@ -191,6 +201,29 @@ class SessionManagerApp(App):
     #filter-bar Input {
         width: 100%;
     }
+    #main-content {
+        height: 1fr;
+    }
+    #project-panel {
+        width: 30;
+        border-right: solid $accent;
+    }
+    #project-panel-title {
+        height: 1;
+        background: $panel;
+        padding: 0 1;
+        text-style: bold;
+        color: $accent;
+    }
+    #project-list {
+        height: 1fr;
+    }
+    #project-list > ListItem {
+        padding: 0 1;
+    }
+    #session-panel {
+        width: 1fr;
+    }
     #sessions-table {
         height: 1fr;
     }
@@ -212,14 +245,15 @@ class SessionManagerApp(App):
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("d", "delete_session", "Delete"),
-        Binding("enter", "view_details", "Details"),
+        Binding("enter", "select_item", "Select"),
         Binding("r", "refresh", "Refresh"),
         Binding("slash", "focus_filter", "Filter"),
         Binding("escape", "clear_filter", "Clear filter"),
         Binding("s", "cycle_sort", "Sort"),
+        Binding("tab", "switch_panel", "Switch panel", show=True),
     ]
 
-    SORT_COLUMNS = ["date", "project", "messages", "size"]
+    SORT_COLUMNS = ["date", "messages", "size"]
 
     def __init__(self) -> None:
         super().__init__()
@@ -228,41 +262,83 @@ class SessionManagerApp(App):
         self.filter_text: str = ""
         self.sort_key: str = "date"
         self.sort_reverse: bool = True
-        self.status_message: str = ""
+        self.selected_project: str = ALL_PROJECTS
+        self.project_keys: list[str] = []
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield Static("", id="stats-bar")
         with Container(id="filter-bar"):
-            yield Input(placeholder="Type to filter sessions (project, topic, branch)...", id="filter-input")
-        yield DataTable(id="sessions-table")
+            yield Input(placeholder="Type to filter sessions...", id="filter-input")
+        with Horizontal(id="main-content"):
+            with Container(id="project-panel"):
+                yield Static(" Projects", id="project-panel-title")
+                yield ListView(id="project-list")
+            with Container(id="session-panel"):
+                yield DataTable(id="sessions-table")
         yield Static("", id="status-bar")
         yield Footer()
 
     def on_mount(self) -> None:
         self._load_sessions()
+        self.query_one("#project-list", ListView).focus()
 
     def _load_sessions(self) -> None:
         self.sessions = discover_sessions()
+        self._rebuild_project_list()
         self._apply_filter()
         self._update_stats()
 
+    def _rebuild_project_list(self) -> None:
+        """Build the project list from current sessions."""
+        project_data: dict[str, dict] = defaultdict(lambda: {"count": 0, "size": 0, "active": 0})
+        for s in self.sessions:
+            project_data[s.project_path]["count"] += 1
+            project_data[s.project_path]["size"] += s.total_size
+            if s.is_active:
+                project_data[s.project_path]["active"] += 1
+
+        sorted_projects = sorted(project_data.items(), key=lambda x: x[1]["size"], reverse=True)
+
+        lv = self.query_one("#project-list", ListView)
+        lv.clear()
+
+        total = len(self.sessions)
+        total_size = _format_size(sum(s.total_size for s in self.sessions))
+        lv.append(ListItem(Label(f"[bold]All Projects[/] ({total}, {total_size})"), name=ALL_PROJECTS))
+        self.project_keys = [ALL_PROJECTS]
+
+        for proj_path, info in sorted_projects:
+            short = _short_project(proj_path)
+            active_marker = " [green]*[/]" if info["active"] > 0 else ""
+            lv.append(ListItem(
+                Label(f"{short} ({info['count']}, {_format_size(info['size'])}){active_marker}"),
+                name=proj_path,
+            ))
+            self.project_keys.append(proj_path)
+
     def _apply_filter(self) -> None:
+        # Filter by selected project
+        if self.selected_project == ALL_PROJECTS:
+            sessions = list(self.sessions)
+        else:
+            sessions = [s for s in self.sessions if s.project_path == self.selected_project]
+
+        # Filter by search text
         if self.filter_text:
             ft = self.filter_text.lower()
-            self.filtered_sessions = [
-                s for s in self.sessions
-                if ft in s.project_path.lower()
-                or ft in s.first_message.lower()
+            sessions = [
+                s for s in sessions
+                if ft in s.first_message.lower()
                 or ft in s.last_user_message.lower()
                 or ft in s.last_assistant_message.lower()
                 or ft in s.git_branch.lower()
                 or ft in s.session_id.lower()
                 or ft in s.cwd.lower()
+                or ft in s.project_path.lower()
             ]
-        else:
-            self.filtered_sessions = list(self.sessions)
 
+        self.filtered_sessions = sessions
         self._sort_sessions()
         self._populate_table()
 
@@ -272,11 +348,6 @@ class SessionManagerApp(App):
         if self.sort_key == "date":
             self.filtered_sessions.sort(
                 key=lambda s: s.started_at or datetime.min.replace(tzinfo=timezone.utc),
-                reverse=self.sort_reverse,
-            )
-        elif self.sort_key == "project":
-            self.filtered_sessions.sort(
-                key=lambda s: s.project_path.lower(),
                 reverse=self.sort_reverse,
             )
         elif self.sort_key == "messages":
@@ -298,51 +369,39 @@ class SessionManagerApp(App):
         arrow = " v" if self.sort_reverse else " ^"
         sort_indicators[self.sort_key] = arrow
 
-        table.add_columns(
-            " ",
-            f"Date{sort_indicators['date']}",
-            f"Project{sort_indicators['project']}",
-            "Branch",
-            "Topic",
-            "Last Response",
-            f"Msgs{sort_indicators['messages']}",
-            f"Size{sort_indicators['size']}",
-        )
+        show_project = self.selected_project == ALL_PROJECTS
+        cols = [" ", f"Date{sort_indicators['date']}", "Branch", "Topic", "Last Response",
+                f"Msgs{sort_indicators['messages']}", f"Size{sort_indicators['size']}"]
+        if show_project:
+            cols.insert(2, "Project")
+        table.add_columns(*cols)
 
         for s in self.filtered_sessions:
             status = "[green]>[/]" if s.is_active else " "
             last_resp = s.last_assistant_message[:60] + "..." if len(s.last_assistant_message) > 60 else s.last_assistant_message
-            table.add_row(
+            row = [
                 status,
                 s.started_str,
-                self._short_project(s.project_path),
                 s.git_branch or "-",
                 s.topic,
                 last_resp or "-",
                 str(s.total_messages),
                 s.size_str,
-                key=s.session_id,
-            )
-
-    def _short_project(self, path: str) -> str:
-        """Shorten project path for display."""
-        home = str(Path.home())
-        if path.startswith(home):
-            path = "~" + path[len(home):]
-        parts = path.split("/")
-        if len(parts) > 4:
-            return "/".join(parts[:2]) + "/.../" + "/".join(parts[-2:])
-        return path
+            ]
+            if show_project:
+                row.insert(2, _short_project(s.project_path))
+            table.add_row(*row, key=s.session_id)
 
     def _update_stats(self) -> None:
         stats = get_summary_stats(self.sessions)
+        proj_label = _short_project(self.selected_project) if self.selected_project != ALL_PROJECTS else "All"
         stats_bar = self.query_one("#stats-bar", Static)
         stats_bar.update(
             f" {stats['total_sessions']} sessions | "
             f"{stats['total_projects']} projects | "
             f"{stats['total_size']} total | "
             f"{stats['active_sessions']} active | "
-            f"Showing {len(self.filtered_sessions)}"
+            f"Viewing: {proj_label} ({len(self.filtered_sessions)})"
         )
 
     def _set_status(self, message: str) -> None:
@@ -353,20 +412,31 @@ class SessionManagerApp(App):
         table = self.query_one("#sessions-table", DataTable)
         if table.cursor_row is None or not self.filtered_sessions:
             return None
-        try:
-            row_key = table.get_row_at(table.cursor_row)
-        except Exception:
-            return None
-        # Find session by matching cursor position
         if table.cursor_row < len(self.filtered_sessions):
             return self.filtered_sessions[table.cursor_row]
         return None
+
+    @on(ListView.Selected, "#project-list")
+    def on_project_selected(self, event: ListView.Selected) -> None:
+        name = event.item.name or ALL_PROJECTS
+        self.selected_project = name
+        self._apply_filter()
+        self._update_stats()
+        self.query_one("#sessions-table", DataTable).focus()
 
     @on(Input.Changed, "#filter-input")
     def on_filter_changed(self, event: Input.Changed) -> None:
         self.filter_text = event.value
         self._apply_filter()
         self._update_stats()
+
+    def action_switch_panel(self) -> None:
+        lv = self.query_one("#project-list", ListView)
+        table = self.query_one("#sessions-table", DataTable)
+        if lv.has_focus:
+            table.focus()
+        else:
+            lv.focus()
 
     def action_focus_filter(self) -> None:
         self.query_one("#filter-input", Input).focus()
@@ -388,14 +458,17 @@ class SessionManagerApp(App):
         idx = self.SORT_COLUMNS.index(self.sort_key)
         next_idx = (idx + 1) % len(self.SORT_COLUMNS)
         self.sort_key = self.SORT_COLUMNS[next_idx]
-        self.sort_reverse = self.sort_key in ("date", "messages", "size")
+        self.sort_reverse = True
         self._apply_filter()
         self._set_status(f"Sorted by {self.sort_key}")
 
-    def action_view_details(self) -> None:
-        session = self._get_selected_session()
-        if session:
-            self.push_screen(SessionDetailScreen(session))
+    def action_select_item(self) -> None:
+        """Enter on project list selects project, on session table shows details."""
+        table = self.query_one("#sessions-table", DataTable)
+        if table.has_focus:
+            session = self._get_selected_session()
+            if session:
+                self.push_screen(SessionDetailScreen(session))
 
     def action_delete_session(self) -> None:
         session = self._get_selected_session()
