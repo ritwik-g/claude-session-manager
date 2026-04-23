@@ -447,7 +447,7 @@ function renderTable() {
             <td class="msgs">${s.total_messages}</td>
             <td class="size">${s.size_str}</td>
             <td style="white-space:nowrap">
-                <button class="btn btn-sm" onclick="copyResume('${s.session_id}')" title="Copy resume command">Copy</button>
+                <button class="btn btn-sm" onclick="copyResume('${s.session_id}')" title="Copy cd + resume command">Open</button>
                 <button class="btn btn-sm" onclick="showDetail('${s.session_id}')">Info</button>
                 <button class="btn btn-sm btn-danger" onclick="confirmDelete('${s.session_id}')" ${deleteDisabled}>Del</button>
             </td>
@@ -493,20 +493,24 @@ function updateBulkActions() {
     }
 }
 
-function copyResume(id) {
-    const cmd = `claude --resume ${id}`;
-    navigator.clipboard.writeText(cmd).then(() => {
-        showToast('Copied: ' + cmd, 'success');
+function clipCopy(text, label) {
+    navigator.clipboard.writeText(text).then(() => {
+        showToast('Copied: ' + label, 'success');
     }).catch(() => {
-        // Fallback for non-HTTPS
         const ta = document.createElement('textarea');
-        ta.value = cmd;
+        ta.value = text;
         document.body.appendChild(ta);
         ta.select();
         document.execCommand('copy');
         document.body.removeChild(ta);
-        showToast('Copied: ' + cmd, 'success');
+        showToast('Copied: ' + label, 'success');
     });
+}
+
+function copyResume(id) {
+    const s = sessions.find(x => x.session_id === id);
+    const cmd = s && s.cwd ? `cd ${s.cwd} && claude --resume ${id}` : `claude --resume ${id}`;
+    clipCopy(cmd, cmd.length > 60 ? 'resume command' : cmd);
 }
 
 function showDetail(id) {
