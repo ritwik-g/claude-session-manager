@@ -217,6 +217,7 @@ class HelpScreen(ModalScreen):
             yield Label("")
             yield Label("[bold]Actions[/]", classes="help-row")
             yield Label("  [bold cyan]c[/]          Copy resume command to clipboard", classes="help-row")
+            yield Label("  [bold cyan]o[/]          Open session in a new terminal", classes="help-row")
             yield Label("  [bold cyan]d[/]          Delete selected session", classes="help-row")
             yield Label("  [bold cyan]r[/]          Refresh session list", classes="help-row")
             yield Label("  [bold cyan]s[/]          Cycle sort (date/messages/size)", classes="help-row")
@@ -303,6 +304,7 @@ class SessionManagerApp(App):
         Binding("question_mark", "show_help", "Help", show=True),
         Binding("tab", "switch_panel", "Tab=Panel", show=True),
         Binding("c", "copy_resume", "Copy"),
+        Binding("o", "open_session", "Open"),
         Binding("d", "delete_session", "Delete"),
         Binding("s", "cycle_sort", "Sort"),
         Binding("slash", "focus_filter", "Filter"),
@@ -530,14 +532,62 @@ class SessionManagerApp(App):
         if session:
             self.push_screen(SessionDetailScreen(session))
 
+    def _copy_to_clipboard(self, text: str) -> None:
+        """Copy text to clipboard with pbcopy fallback for macOS."""
+        import platform
+        import subprocess
+
+        self.copy_to_clipboard(text)
+        # Also try pbcopy/xclip as fallback
+        try:
+            if platform.system() == "Darwin":
+                subprocess.run(["pbcopy"], input=text.encode(), check=True)
+            elif platform.system() == "Linux":
+                subprocess.run(["xclip", "-selection", "clipboard"], input=text.encode(), check=True)
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            pass
+
     def action_copy_resume(self) -> None:
         session = self._get_selected_session()
         if not session:
             self._set_status("No session selected")
             return
         cmd = f"claude --resume {session.session_id}"
-        self.copy_to_clipboard(cmd)
+        self._copy_to_clipboard(cmd)
         self._set_status(f"Copied: {cmd}")
+
+    def action_open_session(self) -> None:
+        """Open the selected session in a new terminal."""
+        import platform
+        import subprocess
+
+        session = self._get_selected_session()
+        if not session:
+            self._set_status("No session selected")
+            return
+        cmd = f"claude --resume {session.session_id}"
+        cwd = session.cwd or str(Path.home())
+        try:
+            if platform.system() == "Darwin":
+                # Open a new Terminal.app tab and run the command
+                apple_script = (
+                    'tell application "Terminal"\n'
+                    "  activate\n"
+                    f'  do script "cd {cwd} && {cmd}"\n'
+                    "end tell"
+                )
+                subprocess.Popen(["osascript", "-e", apple_script])
+            else:
+                # Linux: try common terminal emulators
+                for term in ["gnome-terminal", "xterm", "konsole"]:
+                    try:
+                        subprocess.Popen([term, "--", "bash", "-c", f"cd {cwd} && {cmd}; exec bash"])
+                        break
+                    except FileNotFoundError:
+                        continue
+            self._set_status(f"Opened session in new terminal")
+        except Exception as e:
+            self._set_status(f"Error opening terminal: {e}")
 
     def action_delete_session(self) -> None:
         session = self._get_selected_session()
