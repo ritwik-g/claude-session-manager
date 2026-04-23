@@ -216,6 +216,7 @@ class HelpScreen(ModalScreen):
             yield Label("  [bold cyan]Escape[/]     Clear filter / Close dialog", classes="help-row")
             yield Label("")
             yield Label("[bold]Actions[/]", classes="help-row")
+            yield Label("  [bold cyan]c[/]          Copy resume command to clipboard", classes="help-row")
             yield Label("  [bold cyan]d[/]          Delete selected session", classes="help-row")
             yield Label("  [bold cyan]r[/]          Refresh session list", classes="help-row")
             yield Label("  [bold cyan]s[/]          Cycle sort (date/messages/size)", classes="help-row")
@@ -301,6 +302,7 @@ class SessionManagerApp(App):
     BINDINGS = [
         Binding("question_mark", "show_help", "Help", show=True),
         Binding("tab", "switch_panel", "Tab=Panel", show=True),
+        Binding("c", "copy_resume", "Copy"),
         Binding("d", "delete_session", "Delete"),
         Binding("s", "cycle_sort", "Sort"),
         Binding("slash", "focus_filter", "Filter"),
@@ -527,6 +529,15 @@ class SessionManagerApp(App):
         session = self._get_selected_session()
         if session:
             self.push_screen(SessionDetailScreen(session))
+
+    def action_copy_resume(self) -> None:
+        session = self._get_selected_session()
+        if not session:
+            self._set_status("No session selected")
+            return
+        cmd = f"claude --resume {session.session_id}"
+        self.copy_to_clipboard(cmd)
+        self._set_status(f"Copied: {cmd}")
 
     def action_delete_session(self) -> None:
         session = self._get_selected_session()

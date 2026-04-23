@@ -413,7 +413,7 @@ function renderTable() {
         <th>Last Response</th>
         <th data-sort="messages"${sorted('messages')} style="width:50px;text-align:right">Msgs ${arrow('messages')}</th>
         <th data-sort="size"${sorted('size')} style="width:70px;text-align:right">Size ${arrow('size')}</th>
-        <th style="width:110px">Actions</th></tr>`;
+        <th style="width:160px">Actions</th></tr>`;
     thead.innerHTML = hdr;
 
     // Re-bind sort click handlers
@@ -447,6 +447,7 @@ function renderTable() {
             <td class="msgs">${s.total_messages}</td>
             <td class="size">${s.size_str}</td>
             <td style="white-space:nowrap">
+                <button class="btn btn-sm" onclick="copyResume('${s.session_id}')" title="Copy resume command">Resume</button>
                 <button class="btn btn-sm" onclick="showDetail('${s.session_id}')">Info</button>
                 <button class="btn btn-sm btn-danger" onclick="confirmDelete('${s.session_id}')" ${deleteDisabled}>Del</button>
             </td>
@@ -492,12 +493,28 @@ function updateBulkActions() {
     }
 }
 
+function copyResume(id) {
+    const cmd = `claude --resume ${id}`;
+    navigator.clipboard.writeText(cmd).then(() => {
+        showToast('Copied: ' + cmd, 'success');
+    }).catch(() => {
+        // Fallback for non-HTTPS
+        const ta = document.createElement('textarea');
+        ta.value = cmd;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        showToast('Copied: ' + cmd, 'success');
+    });
+}
+
 function showDetail(id) {
     const s = sessions.find(x => x.session_id === id);
     if (!s) return;
     const content = document.getElementById('detail-content');
     content.innerHTML = `
-        <div class="modal-detail"><span class="label">Session ID:</span> <span class="session-id">${s.session_id}</span></div>
+        <div class="modal-detail"><span class="label">Session ID:</span> <span class="session-id">${s.session_id}</span> <button class="btn btn-sm" onclick="copyResume('${s.session_id}')" style="margin-left:8px">Copy Resume Cmd</button></div>
         <div class="modal-detail"><span class="label">Status:</span> ${s.is_active ? '<span style="color:var(--green)">ACTIVE (PID ' + s.active_pid + ')</span>' : 'Inactive'}</div>
         <div class="modal-detail"><span class="label">Project:</span> <span class="project">${escapeHtml(s.project_path)}</span></div>
         <div class="modal-detail"><span class="label">Working Dir:</span> ${escapeHtml(s.cwd)}</div>
