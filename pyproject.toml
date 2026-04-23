@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claude-session-manager"
+dynamic = ["version"]
+description = "TUI and Web UI for managing Claude Code sessions"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Ritwik Gopi", email = "ritwikgopi@gmail.com" },
+]
+keywords = ["claude", "sessions", "tui", "manager", "claude-code"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "textual>=0.40.0",
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+claude-session-manager = "claude_session_manager.cli:main"
+clsm = "claude_session_manager.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/ritwik-g/claude-session-manager"
+Repository = "https://github.com/ritwik-g/claude-session-manager"
+Issues = "https://github.com/ritwik-g/claude-session-manager/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "claude_session_manager.__version__"}

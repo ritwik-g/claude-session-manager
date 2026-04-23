@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-binaries:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            target: macos-arm64
+            artifact: claude-session-manager-macos-arm64
+          - os: macos-13
+            target: macos-x86_64
+            artifact: claude-session-manager-macos-x86_64
+          - os: ubuntu-latest
+            target: linux-x86_64
+            artifact: claude-session-manager-linux-x86_64
+          - os: windows-latest
+            target: windows-x86_64
+            artifact: claude-session-manager-windows-x86_64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install .
+
+      - name: Build binary
+        run: pyinstaller claude_session_manager.spec
+
+      - name: Rename binary (Unix)
+        if: runner.os != 'Windows'
+        run: mv dist/claude-session-manager dist/${{ matrix.artifact }}
+
+      - name: Rename binary (Windows)
+        if: runner.os == 'Windows'
+        run: move dist\claude-session-manager.exe dist\${{ matrix.artifact }}.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}*
+
+  # publish-pypi:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Set up Python
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: '3.12'
+  #     - name: Install build tools
+  #       run: pip install build twine
+  #     - name: Build sdist and wheel
+  #       run: python -m build
+  #     - name: Publish to PyPI
+  #       env:
+  #         TWINE_USERNAME: __token__
+  #         TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+  #       run: twine upload dist/*
+
+  create-release:
+    needs: [build-binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: artifacts/**/*
