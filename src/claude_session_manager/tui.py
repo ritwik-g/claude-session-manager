@@ -178,6 +178,62 @@ class SessionDetailScreen(ModalScreen):
         self.dismiss()
 
 
+class HelpScreen(ModalScreen):
+    """Modal screen showing keybinding help."""
+
+    CSS = """
+    HelpScreen {
+        align: center middle;
+    }
+    #help-dialog {
+        width: 60;
+        height: auto;
+        max-height: 30;
+        border: thick $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    #help-dialog Label {
+        width: 100%;
+    }
+    .help-row {
+        margin: 0;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape,q,question_mark", "close", "Close"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="help-dialog"):
+            yield Label("[bold underline]Keybindings[/]")
+            yield Label("")
+            yield Label("[bold]Navigation[/]", classes="help-row")
+            yield Label("  [bold cyan]Tab[/]        Switch between projects and sessions", classes="help-row")
+            yield Label("  [bold cyan]Up/Down[/]    Navigate lists", classes="help-row")
+            yield Label("  [bold cyan]Enter[/]      Select project / View session details", classes="help-row")
+            yield Label("  [bold cyan]Escape[/]     Clear filter / Close dialog", classes="help-row")
+            yield Label("")
+            yield Label("[bold]Actions[/]", classes="help-row")
+            yield Label("  [bold cyan]d[/]          Delete selected session", classes="help-row")
+            yield Label("  [bold cyan]r[/]          Refresh session list", classes="help-row")
+            yield Label("  [bold cyan]s[/]          Cycle sort (date/messages/size)", classes="help-row")
+            yield Label("")
+            yield Label("[bold]Search[/]", classes="help-row")
+            yield Label("  [bold cyan]/[/]          Focus filter input", classes="help-row")
+            yield Label("  [bold cyan]Escape[/]     Clear filter and return to table", classes="help-row")
+            yield Label("")
+            yield Label("[bold]Other[/]", classes="help-row")
+            yield Label("  [bold cyan]?[/]          Show this help", classes="help-row")
+            yield Label("  [bold cyan]q[/]          Quit", classes="help-row")
+            yield Label("")
+            yield Label("[dim]Press Esc/q/? to close[/]")
+
+    def action_close(self) -> None:
+        self.dismiss()
+
+
 class SessionManagerApp(App):
     """TUI for managing Claude Code sessions."""
 
@@ -243,14 +299,15 @@ class SessionManagerApp(App):
     """
 
     BINDINGS = [
-        Binding("q", "quit", "Quit"),
-        Binding("d", "delete_session", "Delete"),
+        Binding("question_mark", "show_help", "Help", show=True),
+        Binding("tab", "switch_panel", "Tab=Panel", show=True),
         Binding("enter", "select_item", "Select"),
-        Binding("r", "refresh", "Refresh"),
-        Binding("slash", "focus_filter", "Filter"),
-        Binding("escape", "clear_filter", "Clear filter"),
+        Binding("d", "delete_session", "Delete"),
         Binding("s", "cycle_sort", "Sort"),
-        Binding("tab", "switch_panel", "Switch panel", show=True),
+        Binding("slash", "focus_filter", "Filter"),
+        Binding("r", "refresh", "Refresh"),
+        Binding("escape", "clear_filter", "Clear"),
+        Binding("q", "quit", "Quit"),
     ]
 
     SORT_COLUMNS = ["date", "messages", "size"]
@@ -429,6 +486,9 @@ class SessionManagerApp(App):
         self.filter_text = event.value
         self._apply_filter()
         self._update_stats()
+
+    def action_show_help(self) -> None:
+        self.push_screen(HelpScreen())
 
     def action_switch_panel(self) -> None:
         lv = self.query_one("#project-list", ListView)
