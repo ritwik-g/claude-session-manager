@@ -212,7 +212,7 @@ class HelpScreen(ModalScreen):
             yield Label("[bold]Navigation[/]", classes="help-row")
             yield Label("  [bold cyan]Tab[/]        Switch between projects and sessions", classes="help-row")
             yield Label("  [bold cyan]Up/Down[/]    Navigate lists", classes="help-row")
-            yield Label("  [bold cyan]Enter[/]      Select project / View session details", classes="help-row")
+            yield Label("  [bold cyan]Enter[/]      Select project (left) / View details (right)", classes="help-row")
             yield Label("  [bold cyan]Escape[/]     Clear filter / Close dialog", classes="help-row")
             yield Label("")
             yield Label("[bold]Actions[/]", classes="help-row")
@@ -301,7 +301,6 @@ class SessionManagerApp(App):
     BINDINGS = [
         Binding("question_mark", "show_help", "Help", show=True),
         Binding("tab", "switch_panel", "Tab=Panel", show=True),
-        Binding("enter", "select_item", "Select"),
         Binding("d", "delete_session", "Delete"),
         Binding("s", "cycle_sort", "Sort"),
         Binding("slash", "focus_filter", "Filter"),
@@ -332,7 +331,7 @@ class SessionManagerApp(App):
                 yield Static(" Projects", id="project-panel-title")
                 yield ListView(id="project-list")
             with Container(id="session-panel"):
-                yield DataTable(id="sessions-table")
+                yield DataTable(id="sessions-table", cursor_type="row")
         yield Static("", id="status-bar")
         yield Footer()
 
@@ -522,13 +521,12 @@ class SessionManagerApp(App):
         self._apply_filter()
         self._set_status(f"Sorted by {self.sort_key}")
 
-    def action_select_item(self) -> None:
-        """Enter on project list selects project, on session table shows details."""
-        table = self.query_one("#sessions-table", DataTable)
-        if table.has_focus:
-            session = self._get_selected_session()
-            if session:
-                self.push_screen(SessionDetailScreen(session))
+    @on(DataTable.RowSelected, "#sessions-table")
+    def on_session_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Enter on session table shows details."""
+        session = self._get_selected_session()
+        if session:
+            self.push_screen(SessionDetailScreen(session))
 
     def action_delete_session(self) -> None:
         session = self._get_selected_session()

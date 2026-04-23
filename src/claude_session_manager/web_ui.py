@@ -144,7 +144,9 @@ table {
     width: 100%;
     border-collapse: collapse;
 }
-thead { position: sticky; top: 72px; z-index: 10; }
+col.col-topic { width: 25%; }
+col.col-last { width: 25%; }
+thead { position: sticky; top: 0; z-index: 10; }
 th {
     background: var(--bg-surface);
     padding: 10px 12px;
@@ -267,19 +269,7 @@ input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
 </div>
 <div style="flex:1;overflow:auto">
 <table>
-    <thead>
-        <tr>
-            <th class="checkbox-col"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)"></th>
-            <th data-sort="date" class="sorted">Date <span class="arrow">v</span></th>
-            <th data-sort="project">Project</th>
-            <th>Branch</th>
-            <th>Topic</th>
-            <th>Last Response</th>
-            <th data-sort="messages" style="text-align:right">Msgs</th>
-            <th data-sort="size" style="text-align:right">Size</th>
-            <th>Actions</th>
-        </tr>
-    </thead>
+    <thead id="table-head"></thead>
     <tbody id="session-list">
         <tr><td colspan="9" class="loading">Loading sessions...</td></tr>
     </tbody>
@@ -407,31 +397,61 @@ function getFiltered() {
 
 function renderTable() {
     const filtered = getFiltered();
+    const showProject = selectedProject === '__all__';
+    const colCount = showProject ? 9 : 8;
+
+    // Build dynamic header
+    const thead = document.getElementById('table-head');
+    const arrow = key => sortKey === key ? `<span class="arrow">${sortReverse ? 'v' : '^'}</span>` : '';
+    const sorted = key => sortKey === key ? ' class="sorted"' : '';
+    let hdr = `<tr>
+        <th class="checkbox-col" style="width:40px"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)"></th>
+        <th data-sort="date"${sorted('date')} style="width:130px">Date ${arrow('date')}</th>`;
+    if (showProject) hdr += `<th data-sort="project"${sorted('project')} style="width:160px">Project ${arrow('project')}</th>`;
+    hdr += `<th style="width:90px">Branch</th>
+        <th>Topic</th>
+        <th>Last Response</th>
+        <th data-sort="messages"${sorted('messages')} style="width:50px;text-align:right">Msgs ${arrow('messages')}</th>
+        <th data-sort="size"${sorted('size')} style="width:70px;text-align:right">Size ${arrow('size')}</th>
+        <th style="width:110px">Actions</th></tr>`;
+    thead.innerHTML = hdr;
+
+    // Re-bind sort click handlers
+    thead.querySelectorAll('th[data-sort]').forEach(th => {
+        th.addEventListener('click', () => {
+            const key = th.dataset.sort;
+            if (sortKey === key) sortReverse = !sortReverse;
+            else { sortKey = key; sortReverse = key !== 'project'; }
+            renderTable();
+        });
+    });
+
     const tbody = document.getElementById('session-list');
     if (filtered.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="9" class="empty">No sessions found</td></tr>';
+        tbody.innerHTML = `<tr><td colspan="${colCount}" class="empty">No sessions found</td></tr>`;
         return;
     }
     tbody.innerHTML = filtered.map(s => {
         const active = s.is_active ? ' active' : '';
-        const badge = s.is_active ? `<span class="active-badge">ACTIVE (PID ${s.active_pid})</span>` : '';
+        const badge = s.is_active ? `<span class="active-badge">ACTIVE</span>` : '';
         const checked = selected.has(s.session_id) ? 'checked' : '';
         const deleteDisabled = s.is_active ? 'disabled title="Cannot delete active session"' : '';
         const lastResp = s.last_assistant_message ? (s.last_assistant_message.length > 60 ? s.last_assistant_message.substring(0, 60) + '...' : s.last_assistant_message) : '-';
-        return `<tr class="${active}">
+        let row = `<tr class="${active}">
             <td class="checkbox-col"><input type="checkbox" ${checked} ${s.is_active ? 'disabled' : ''} onchange="toggleSelect('${s.session_id}', this)"></td>
-            <td class="date">${s.started_str} ${badge}</td>
-            <td class="project">${shortProject(s.project_path)}</td>
-            <td class="branch">${s.git_branch || '-'}</td>
+            <td class="date">${s.started_str} ${badge}</td>`;
+        if (showProject) row += `<td class="project">${shortProject(s.project_path)}</td>`;
+        row += `<td class="branch">${s.git_branch || '-'}</td>
             <td class="topic" title="${escapeHtml(s.first_message)}">${escapeHtml(s.topic)}</td>
             <td class="topic" title="${escapeHtml(s.last_assistant_message)}">${escapeHtml(lastResp)}</td>
             <td class="msgs">${s.total_messages}</td>
             <td class="size">${s.size_str}</td>
-            <td>
+            <td style="white-space:nowrap">
                 <button class="btn btn-sm" onclick="showDetail('${s.session_id}')">Info</button>
                 <button class="btn btn-sm btn-danger" onclick="confirmDelete('${s.session_id}')" ${deleteDisabled}>Del</button>
             </td>
         </tr>`;
+        return row;
     }).join('');
     updateBulkActions();
 }
@@ -561,23 +581,6 @@ function refresh() {
     document.getElementById('session-list').innerHTML = '<tr><td colspan="9" class="loading">Loading...</td></tr>';
     fetchSessions();
 }
-
-// Sort headers
-document.querySelectorAll('th[data-sort]').forEach(th => {
-    th.addEventListener('click', () => {
-        const key = th.dataset.sort;
-        if (sortKey === key) sortReverse = !sortReverse;
-        else { sortKey = key; sortReverse = key !== 'project'; }
-        // Update header indicators
-        document.querySelectorAll('th[data-sort]').forEach(h => {
-            h.classList.remove('sorted');
-            h.querySelector('.arrow')?.remove();
-        });
-        th.classList.add('sorted');
-        th.insertAdjacentHTML('beforeend', `<span class="arrow">${sortReverse ? 'v' : '^'}</span>`);
-        renderTable();
-    });
-});
 
 // Filter
 document.getElementById('filter').addEventListener('input', () => renderTable());
