@@ -447,7 +447,7 @@ function renderTable() {
             <td class="msgs">${s.total_messages}</td>
             <td class="size">${s.size_str}</td>
             <td style="white-space:nowrap">
-                <button class="btn btn-sm" onclick="copyResume('${s.session_id}')" title="Copy cd + resume command">Open</button>
+                <button class="btn btn-sm" onclick="copyResume('${s.session_id}')" title="Copy cd + resume command">Copy</button>
                 <button class="btn btn-sm" onclick="showDetail('${s.session_id}')">Info</button>
                 <button class="btn btn-sm btn-danger" onclick="confirmDelete('${s.session_id}')" ${deleteDisabled}>Del</button>
             </td>
