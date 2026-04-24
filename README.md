@@ -2,6 +2,8 @@
 
 A TUI and Web UI for viewing, searching, and managing your [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions.
 
+https://github.com/user-attachments/assets/2cc5c650-0719-482d-ae73-da97af236cdf
+
 ## Features
 
 - **TUI** - Interactive terminal UI with project navigation, sorting, filtering, and session details (built with [Textual](https://textual.textualize.io/))
