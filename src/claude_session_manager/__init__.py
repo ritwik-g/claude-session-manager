@@ -1,3 +1,3 @@
 """Claude Session Manager - TUI and Web UI for managing Claude Code sessions."""
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
