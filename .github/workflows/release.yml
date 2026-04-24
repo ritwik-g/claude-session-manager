@@ -16,9 +16,6 @@ jobs:
           - os: macos-latest
             target: macos-arm64
             artifact: claude-session-manager-macos-arm64
-          - os: macos-13
-            target: macos-x86_64
-            artifact: claude-session-manager-macos-x86_64
           - os: ubuntu-latest
             target: linux-x86_64
             artifact: claude-session-manager-linux-x86_64
