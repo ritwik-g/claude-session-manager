@@ -4,32 +4,52 @@ A TUI and Web UI for viewing, searching, and managing your [Claude Code](https:/
 
 ## Features
 
-- **TUI** - Interactive terminal UI with sorting, filtering, and session details (built with [Textual](https://textual.textualize.io/))
-- **Web UI** - Browser-based interface with bulk selection and deletion
+- **TUI** - Interactive terminal UI with project navigation, sorting, filtering, and session details (built with [Textual](https://textual.textualize.io/))
+- **Web UI** - Browser-based interface with project sidebar, bulk selection, and deletion
 - **Quick list** - Fast terminal table output
 - **Stats** - Aggregate session statistics per project
 - **Session deletion** - Clean up old sessions (JSONL, tool results, file history)
 - **Search** - Filter by project, topic, branch, or message content
+- **Resume** - Copy resume commands or open sessions directly in a new terminal
 
 ## Installation
-
-### Via pip / pipx (recommended)
-
-```bash
-pip install claude-session-manager
-# or
-pipx install claude-session-manager
-```
 
 ### Pre-built binaries
 
 Download the binary for your platform from [GitHub Releases](https://github.com/ritwik-g/claude-session-manager/releases).
 
-On macOS, you may need to clear the quarantine flag:
+**macOS (Apple Silicon):**
 
 ```bash
-xattr -cr claude-session-manager-macos-arm64
-chmod +x claude-session-manager-macos-arm64
+# Download
+curl -L -o clsm https://github.com/ritwik-g/claude-session-manager/releases/latest/download/claude-session-manager-macos-arm64
+
+# Make executable and clear quarantine
+chmod +x clsm
+xattr -cr clsm
+
+# Move to PATH (optional)
+sudo mv clsm /usr/local/bin/
+```
+
+**Linux:**
+
+```bash
+curl -L -o clsm https://github.com/ritwik-g/claude-session-manager/releases/latest/download/claude-session-manager-linux-x86_64
+chmod +x clsm
+sudo mv clsm /usr/local/bin/
+```
+
+**Windows:**
+
+Download `claude-session-manager-windows-x86_64.exe` from [Releases](https://github.com/ritwik-g/claude-session-manager/releases).
+
+### Via pip / pipx
+
+```bash
+pip install claude-session-manager
+# or
+pipx install claude-session-manager
 ```
 
 ### From source
@@ -56,11 +76,15 @@ clsm --web --port 9000         # Custom port for web UI
 
 | Key | Action |
 |-----|--------|
-| `/` | Filter/search |
-| `Enter` | Session details |
+| `Tab` | Switch between project list and session table |
+| `Enter` | Select project (left panel) / View session details (right panel) |
+| `c` | Copy resume command to clipboard |
+| `o` | Open session in a new terminal tab |
 | `d` | Delete session |
-| `s` | Cycle sort (date/project/messages/size) |
+| `/` | Filter/search |
+| `s` | Cycle sort (date/messages/size) |
 | `r` | Refresh |
+| `?` | Show help |
 | `q` | Quit |
 
 ## Requirements
