@@ -2,6 +2,8 @@
 
 A TUI and Web UI for viewing, searching, and managing your [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions.
 
+📖 **[Documentation](https://ritwik-g.github.io/claude-session-manager/)**
+
 https://github.com/user-attachments/assets/2cc5c650-0719-482d-ae73-da97af236cdf
 
 ## Features
