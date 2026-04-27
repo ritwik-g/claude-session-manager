@@ -117,7 +117,7 @@ class SessionDetailScreen(ModalScreen):
     #detail-dialog {
         width: 100;
         height: auto;
-        max-height: 40;
+        max-height: 48;
         border: thick $accent;
         background: $surface;
         padding: 1 2;
@@ -153,6 +153,27 @@ class SessionDetailScreen(ModalScreen):
             yield Label(f"[bold]Messages:[/]    {s.user_message_count} user / {s.assistant_message_count} assistant / {s.total_messages} total")
             yield Label(f"[bold]JSONL Size:[/]  {s.file_size_str}")
             yield Label(f"[bold]Total Size:[/]  {s.size_str}")
+            yield Label("")
+            yield Label("[bold underline]Usage / Context[/]")
+            yield Label(f"[bold]Model(s):[/]      {s.models_str}")
+            yield Label(f"[bold]Total Tokens:[/]  {s.tokens_total_str}")
+            if s.total_input_tokens:
+                yield Label(f"[bold]  Input:[/]       {s.tokens_in_str}")
+            if s.total_output_tokens:
+                yield Label(f"[bold]  Output:[/]      {s.tokens_out_str}")
+            if s.total_cache_read_tokens:
+                yield Label(
+                    f"[bold]  Cache Read:[/]  {s.tokens_cache_read_str}  "
+                    f"({s.cache_hit_ratio_str} hit ratio)"
+                )
+            if s.total_cache_creation_tokens:
+                yield Label(f"[bold]  Cache Write:[/] {s.tokens_cache_creation_str}")
+            if s.service_tier:
+                yield Label(f"[bold]Service Tier:[/]  {s.service_tier}")
+            if s.web_search_count:
+                yield Label(f"[bold]Web Search:[/]    {s.web_search_count}")
+            if s.web_fetch_count:
+                yield Label(f"[bold]Web Fetch:[/]     {s.web_fetch_count}")
             if s.slug:
                 yield Label(f"[bold]Slug:[/]        {s.slug}")
             if s.pr_links:

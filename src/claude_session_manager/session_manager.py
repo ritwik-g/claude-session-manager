@@ -40,6 +40,58 @@ class SessionInfo:
     last_assistant_message: str = ""
     last_prompt: str = ""
     pr_links: list = field(default_factory=list)
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_cache_creation_tokens: int = 0
+    total_cache_read_tokens: int = 0
+    models_used: list = field(default_factory=list)
+    web_search_count: int = 0
+    web_fetch_count: int = 0
+    service_tier: str = ""
+
+    @property
+    def total_tokens(self) -> int:
+        return (
+            self.total_input_tokens
+            + self.total_output_tokens
+            + self.total_cache_creation_tokens
+            + self.total_cache_read_tokens
+        )
+
+    @property
+    def cache_hit_ratio_str(self) -> str:
+        denom = (
+            self.total_input_tokens
+            + self.total_cache_read_tokens
+            + self.total_cache_creation_tokens
+        )
+        if denom == 0:
+            return "N/A"
+        return f"{(self.total_cache_read_tokens / denom) * 100:.1f}%"
+
+    @property
+    def tokens_total_str(self) -> str:
+        return _format_tokens(self.total_tokens)
+
+    @property
+    def tokens_in_str(self) -> str:
+        return _format_tokens(self.total_input_tokens)
+
+    @property
+    def tokens_out_str(self) -> str:
+        return _format_tokens(self.total_output_tokens)
+
+    @property
+    def tokens_cache_read_str(self) -> str:
+        return _format_tokens(self.total_cache_read_tokens)
+
+    @property
+    def tokens_cache_creation_str(self) -> str:
+        return _format_tokens(self.total_cache_creation_tokens)
+
+    @property
+    def models_str(self) -> str:
+        return ", ".join(self.models_used) if self.models_used else "N/A"
 
     @property
     def duration_str(self) -> str:
@@ -86,6 +138,14 @@ def _format_size(size_bytes: int) -> str:
     if size_bytes < 1024 * 1024 * 1024:
         return f"{size_bytes / (1024 * 1024):.1f} MB"
     return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
+
+
+def _format_tokens(n: int) -> str:
+    if n < 1000:
+        return str(n)
+    if n < 1_000_000:
+        return f"{n / 1000:.1f}K"
+    return f"{n / 1_000_000:.1f}M"
 
 
 def _project_dir_to_path(project_dir: str) -> str:
@@ -149,6 +209,14 @@ def _parse_session_jsonl(jsonl_path: Path, max_lines: int = 200) -> dict:
         "last_assistant_message": "",
         "last_prompt": "",
         "pr_links": [],
+        "total_input_tokens": 0,
+        "total_output_tokens": 0,
+        "total_cache_creation_tokens": 0,
+        "total_cache_read_tokens": 0,
+        "models_used": [],
+        "web_search_count": 0,
+        "web_fetch_count": 0,
+        "service_tier": "",
     }
 
     try:
@@ -225,8 +293,12 @@ def _parse_session_jsonl(jsonl_path: Path, max_lines: int = 200) -> dict:
         elif entry_type in ("assistant", "message"):
             result["assistant_count"] += 1
             result["total"] += 1
+            msg = entry.get("message", {})
+            if not isinstance(msg, dict):
+                msg = {}
+
             # Track last assistant text response
-            content = entry.get("message", {}).get("content", [])
+            content = msg.get("content", [])
             if isinstance(content, list):
                 texts = [
                     b.get("text", "")
@@ -235,6 +307,30 @@ def _parse_session_jsonl(jsonl_path: Path, max_lines: int = 200) -> dict:
                 ]
                 if texts:
                     result["last_assistant_message"] = " ".join(texts).strip()[:300]
+
+            # Aggregate token usage
+            usage = msg.get("usage")
+            if isinstance(usage, dict):
+                result["total_input_tokens"] += usage.get("input_tokens", 0) or 0
+                result["total_output_tokens"] += usage.get("output_tokens", 0) or 0
+                result["total_cache_creation_tokens"] += (
+                    usage.get("cache_creation_input_tokens", 0) or 0
+                )
+                result["total_cache_read_tokens"] += (
+                    usage.get("cache_read_input_tokens", 0) or 0
+                )
+                tier = usage.get("service_tier")
+                if isinstance(tier, str) and tier:
+                    result["service_tier"] = tier
+                stu = usage.get("server_tool_use")
+                if isinstance(stu, dict):
+                    result["web_search_count"] += stu.get("web_search_requests", 0) or 0
+                    result["web_fetch_count"] += stu.get("web_fetch_requests", 0) or 0
+
+            # Track models seen, in first-seen order
+            model = msg.get("model")
+            if isinstance(model, str) and model and model not in result["models_used"]:
+                result["models_used"].append(model)
 
         elif entry_type == "system":
             result["total"] += 1
@@ -317,6 +413,14 @@ def discover_sessions() -> list[SessionInfo]:
                 last_assistant_message=metadata["last_assistant_message"],
                 last_prompt=metadata["last_prompt"],
                 pr_links=metadata["pr_links"],
+                total_input_tokens=metadata["total_input_tokens"],
+                total_output_tokens=metadata["total_output_tokens"],
+                total_cache_creation_tokens=metadata["total_cache_creation_tokens"],
+                total_cache_read_tokens=metadata["total_cache_read_tokens"],
+                models_used=metadata["models_used"],
+                web_search_count=metadata["web_search_count"],
+                web_fetch_count=metadata["web_fetch_count"],
+                service_tier=metadata["service_tier"],
             )
             sessions.append(session)
 

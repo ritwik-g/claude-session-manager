@@ -529,6 +529,16 @@ function showDetail(id) {
         <div class="modal-detail"><span class="label">Messages:</span> ${s.user_message_count} user / ${s.assistant_message_count} assistant / ${s.total_messages} total</div>
         <div class="modal-detail"><span class="label">JSONL Size:</span> ${s.file_size_str}</div>
         <div class="modal-detail"><span class="label">Total Size:</span> ${s.size_str}</div>
+        <hr style="border-color:var(--border);margin:12px 0">
+        <div class="modal-detail"><span class="label">Model(s):</span> ${escapeHtml(s.models_str || 'N/A')}</div>
+        <div class="modal-detail"><span class="label">Total Tokens:</span> ${s.tokens_total_str}</div>
+        ${s.total_input_tokens ? '<div class="modal-detail"><span class="label">&nbsp;&nbsp;Input:</span> ' + s.tokens_in_str + '</div>' : ''}
+        ${s.total_output_tokens ? '<div class="modal-detail"><span class="label">&nbsp;&nbsp;Output:</span> ' + s.tokens_out_str + '</div>' : ''}
+        ${s.total_cache_read_tokens ? '<div class="modal-detail"><span class="label">&nbsp;&nbsp;Cache Read:</span> ' + s.tokens_cache_read_str + ' (' + s.cache_hit_ratio_str + ' hit ratio)</div>' : ''}
+        ${s.total_cache_creation_tokens ? '<div class="modal-detail"><span class="label">&nbsp;&nbsp;Cache Write:</span> ' + s.tokens_cache_creation_str + '</div>' : ''}
+        ${s.service_tier ? '<div class="modal-detail"><span class="label">Service Tier:</span> ' + escapeHtml(s.service_tier) + '</div>' : ''}
+        ${s.web_search_count ? '<div class="modal-detail"><span class="label">Web Search:</span> ' + s.web_search_count + '</div>' : ''}
+        ${s.web_fetch_count ? '<div class="modal-detail"><span class="label">Web Fetch:</span> ' + s.web_fetch_count + '</div>' : ''}
         ${s.pr_links && s.pr_links.length ? '<div class="modal-detail"><span class="label">PRs Created:</span> ' + s.pr_links.map(l => '<a href="' + escapeHtml(l) + '" target="_blank" style="color:var(--accent)">' + escapeHtml(l) + '</a>').join(', ') + '</div>' : ''}
         <hr style="border-color:var(--border);margin:12px 0">
         <div class="modal-detail"><span class="label">First Message:</span></div>
@@ -651,6 +661,22 @@ def _session_to_dict(s) -> dict:
         "last_assistant_message": s.last_assistant_message,
         "last_prompt": s.last_prompt,
         "pr_links": s.pr_links,
+        "total_input_tokens": s.total_input_tokens,
+        "total_output_tokens": s.total_output_tokens,
+        "total_cache_creation_tokens": s.total_cache_creation_tokens,
+        "total_cache_read_tokens": s.total_cache_read_tokens,
+        "total_tokens": s.total_tokens,
+        "models_used": s.models_used,
+        "models_str": s.models_str,
+        "web_search_count": s.web_search_count,
+        "web_fetch_count": s.web_fetch_count,
+        "service_tier": s.service_tier,
+        "tokens_total_str": s.tokens_total_str,
+        "tokens_in_str": s.tokens_in_str,
+        "tokens_out_str": s.tokens_out_str,
+        "tokens_cache_read_str": s.tokens_cache_read_str,
+        "tokens_cache_creation_str": s.tokens_cache_creation_str,
+        "cache_hit_ratio_str": s.cache_hit_ratio_str,
     }
 
 

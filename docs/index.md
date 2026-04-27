@@ -14,6 +14,7 @@ If you've used Claude Code for any length of time, you already know the problem:
 - **Web UI** — browser-based interface with project sidebar, bulk selection, and deletion
 - **Quick list** — fast terminal table output
 - **Stats** — aggregate session statistics per project
+- **Usage breakdown** — per-session token totals (input / output / cache read / cache write), cache hit ratio, model(s), and web tool counts in the detail view
 - **Session deletion** — clean up old sessions (JSONL, tool results, file history)
 - **Search** — filter by project, topic, branch, or message content
 - **Resume** — copy resume commands or open sessions directly in a new terminal

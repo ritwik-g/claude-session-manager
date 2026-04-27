@@ -23,6 +23,10 @@ You get the same data in a Textual-powered TUI: project list on the left, sessio
 | `?` | Show help overlay |
 | `q` | Quit |
 
+## Session details
+
+Press `Enter` on a session row to open the details modal. Alongside project, branch, version, message counts, and on-disk size, you also get a **Usage / Context** section: model(s) used, total tokens, the input/output/cache-read/cache-write breakdown, cache hit ratio, service tier, and any web search / web fetch counts. These are aggregated from every assistant message in the session.
+
 ## Tips
 
 - Hit `?` at any time for an in-app cheat sheet of these bindings.

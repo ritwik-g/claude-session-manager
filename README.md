@@ -12,6 +12,7 @@ https://github.com/user-attachments/assets/2cc5c650-0719-482d-ae73-da97af236cdf
 - **Web UI** - Browser-based interface with project sidebar, bulk selection, and deletion
 - **Quick list** - Fast terminal table output
 - **Stats** - Aggregate session statistics per project
+- **Usage breakdown** - Per-session token totals (input / output / cache read / cache write), cache hit ratio, model(s), and web tool counts in the detail view
 - **Session deletion** - Clean up old sessions (JSONL, tool results, file history)
 - **Search** - Filter by project, topic, branch, or message content
 - **Resume** - Copy resume commands or open sessions directly in a new terminal

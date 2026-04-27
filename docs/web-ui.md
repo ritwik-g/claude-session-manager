@@ -48,6 +48,7 @@ This panel gives you everything needed to triage a session at a glance:
 - **Started + duration** — when the session began and how long it has been running.
 - **Message counts** — user / assistant / total.
 - **JSONL size and total on-disk size** (transcript + tool results + file history).
+- **Usage / context** — model(s) used, total tokens (input, output, cache read with hit ratio, cache write), service tier, and any web search / web fetch counts. Aggregated from every assistant message in the session.
 - **First message, last user message, last response** — enough context to remember what the session was about without having to resume it.
 
 ## Per-row actions
