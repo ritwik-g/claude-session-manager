@@ -6,6 +6,9 @@ __pycache__/
 dist/
 build/
 
+# MkDocs build output
+site/
+
 # Virtual environment
 .venv/
 venv/
