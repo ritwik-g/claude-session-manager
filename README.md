@@ -49,14 +49,6 @@ sudo mv clsm /usr/local/bin/
 
 Download `claude-session-manager-windows-x86_64.exe` from [Releases](https://github.com/ritwik-g/claude-session-manager/releases).
 
-### Via pip / pipx
-
-```bash
-pip install claude-session-manager
-# or
-pipx install claude-session-manager
-```
-
 ### From source
 
 ```bash
@@ -64,6 +56,8 @@ git clone https://github.com/ritwik-g/claude-session-manager.git
 cd claude-session-manager
 pip install .
 ```
+
+> **Note:** This package is not yet published to PyPI, so `pip install claude-session-manager` / `pipx install claude-session-manager` won't work. Use a pre-built binary or install from source as shown above.
 
 ## Usage
 
