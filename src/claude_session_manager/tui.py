@@ -471,7 +471,9 @@ class SessionManagerApp(App):
             ]
             if show_project:
                 row.insert(2, _short_project(s.project_path))
-            table.add_row(*row, key=s.session_id)
+            # jsonl_path is unique per session file; session_id (the jsonl stem)
+            # can collide when the same session exists under multiple project dirs.
+            table.add_row(*row, key=str(s.jsonl_path))
 
     def _update_stats(self) -> None:
         stats = get_summary_stats(self.sessions)
