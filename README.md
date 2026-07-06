@@ -4,7 +4,15 @@ A TUI and Web UI for viewing, searching, and managing your [Claude Code](https:/
 
 📖 **[Documentation](https://ritwik-g.github.io/claude-session-manager/)**
 
-https://github.com/user-attachments/assets/2cc5c650-0719-482d-ae73-da97af236cdf
+### Web UI
+
+![Web UI demo](docs/screenshots/clsm-web.gif)
+
+### Terminal UI
+
+![TUI demo](docs/screenshots/clsm-tui.gif)
+
+> Demos use a synthetic dataset.
 
 ## Features
 

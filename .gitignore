@@ -21,6 +21,8 @@ env/
 *.mp4
 *.mov
 *.gif
+# ...but keep the demo GIFs used in the README/docs
+!docs/screenshots/*.gif
 
 # OS
 .DS_Store

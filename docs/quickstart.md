@@ -20,6 +20,7 @@ By default the web UI binds to `http://localhost:8420`. Use `--port` to change i
 | `--no-browser` | Don't auto-open the browser |
 | `--list` | Print a tabular list of sessions and exit |
 | `--stats` | Print per-project totals and exit |
+| `--path <dir>` | Scope any view to sessions whose working directory is under `<dir>` |
 | `--version` | Show version |
 
 ## What gets read
