@@ -2,11 +2,43 @@
 
 import json
 import os
+import re
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+_IMAGE_MARKER_RE = re.compile(r"\[Image #\d+\]\s*")
+
+
+def humanize_snippet(text: str) -> str:
+    """Collapse whitespace and strip attachment markers for display as a label."""
+    text = _IMAGE_MARKER_RE.sub("", text or "")
+    return " ".join(text.split())
+
+
+def relative_time(dt: Optional[datetime]) -> str:
+    """Human 'time ago' string, falling back to an absolute date for old items."""
+    if not dt:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    secs = int((datetime.now(timezone.utc) - dt).total_seconds())
+    if secs < 0:
+        secs = 0
+    if secs < 90:
+        return "just now"
+    if secs < 3600:
+        return f"{secs // 60}m ago"
+    if secs < 86400:
+        return f"{secs // 3600}h ago"
+    days = secs // 86400
+    if days < 7:
+        return f"{days}d ago"
+    if days < 28:
+        return f"{days // 7}w ago"
+    return dt.astimezone().strftime("%b %d")
 
 
 CLAUDE_DIR = Path.home() / ".claude"
@@ -36,6 +68,9 @@ class SessionInfo:
     is_active: bool = False
     active_pid: Optional[int] = None
     slug: str = ""
+    ai_title: str = ""  # AI-generated one-line summary of the session
+    custom_title: str = ""  # user-assigned name for the session
+    agent_name: str = ""  # name of the agent, when run as a named agent
     last_user_message: str = ""
     last_assistant_message: str = ""
     last_prompt: str = ""
@@ -129,6 +164,82 @@ class SessionInfo:
             return msg[:77] + "..."
         return msg or "(empty session)"
 
+    def _clean_first_message(self) -> str:
+        """First user message collapsed to a single line, for use as a fallback label."""
+        return humanize_snippet(self.first_message)
+
+    @property
+    def real_path(self) -> str:
+        """Authoritative project path.
+
+        ``project_path`` is derived from the encoded project-dir name, which
+        replaces every '/' with '-' and is therefore lossy for folders that
+        contain hyphens (e.g. 'unstract-repos' becomes 'unstract/repos'). The
+        session's recorded ``cwd`` is the real on-disk path, so prefer it.
+        """
+        return self.cwd or self.project_path
+
+    @property
+    def real_path_short(self) -> str:
+        """Real path with the home directory collapsed to '~'."""
+        home = str(Path.home())
+        path = self.real_path
+        if path.startswith(home):
+            return "~" + path[len(home):]
+        return path
+
+    @property
+    def project_leaf(self) -> str:
+        """The final folder name of the real path (e.g. 'unstract-repos')."""
+        return self.real_path.rstrip("/").rsplit("/", 1)[-1] or self.real_path
+
+    @property
+    def when_str(self) -> str:
+        """Relative 'time ago' for the most recent activity."""
+        return relative_time(self.last_activity or self.started_at)
+
+    @property
+    def last_activity_str(self) -> str:
+        if not self.last_activity:
+            return "Unknown"
+        return self.last_activity.strftime("%Y-%m-%d %H:%M")
+
+    @property
+    def display_title(self) -> str:
+        """Best human-readable line for this session.
+
+        Prefers the AI-generated summary (the most descriptive single line),
+        then a user-assigned name, then the first user message, so lists show
+        something meaningful instead of a pasted URL or a bare UUID. The
+        user-assigned name is surfaced separately as a short tag / "Name" field.
+        """
+        if self.ai_title:
+            return self.ai_title
+        if self.custom_title:
+            return self.custom_title
+        return self._clean_first_message() or "(untitled session)"
+
+    @property
+    def has_title(self) -> bool:
+        """True when a real name/summary exists (not just the raw first message)."""
+        return bool(self.custom_title or self.ai_title)
+
+    @property
+    def subtitle(self) -> str:
+        """Secondary context line: the raw first prompt, for extra context.
+
+        Suppressed when it would merely echo the title (the AI summary is usually
+        derived from the first message, so the two are frequently near-duplicates).
+        """
+        candidate = self._clean_first_message()
+        if not candidate:
+            return ""
+        a = " ".join(candidate.lower().split())
+        b = " ".join(self.display_title.lower().split())
+        if a == b or a.startswith(b) or b.startswith(a):
+            return ""
+        return candidate
+
 
 def _format_size(size_bytes: int) -> str:
     if size_bytes < 1024:
@@ -205,6 +316,9 @@ def _parse_session_jsonl(jsonl_path: Path, max_lines: int = 200) -> dict:
         "version": "",
         "cwd": "",
         "slug": "",
+        "ai_title": "",
+        "custom_title": "",
+        "agent_name": "",
         "last_user_message": "",
         "last_assistant_message": "",
         "last_prompt": "",
@@ -338,6 +452,27 @@ def _parse_session_jsonl(jsonl_path: Path, max_lines: int = 200) -> dict:
             if slug:
                 result["slug"] = slug
 
+        elif entry_type == "ai-title":
+            # Metadata entries were previously counted via the catch-all below;
+            # keep counting them so message totals are unchanged.
+            result["total"] += 1
+            # Session may carry several as it evolves; the latest wins.
+            title = entry.get("aiTitle")
+            if isinstance(title, str) and title.strip():
+                result["ai_title"] = title.strip()
+
+        elif entry_type == "custom-title":
+            result["total"] += 1
+            title = entry.get("customTitle")
+            if isinstance(title, str) and title.strip():
+                result["custom_title"] = title.strip()
+
+        elif entry_type == "agent-name":
+            result["total"] += 1
+            name = entry.get("agentName")
+            if isinstance(name, str) and name.strip():
+                result["agent_name"] = name.strip()
+
         elif entry_type == "last-prompt":
             result["last_prompt"] = entry.get("lastPrompt", "")[:200]
 
@@ -409,6 +544,9 @@ def discover_sessions() -> list[SessionInfo]:
                 is_active=is_active,
                 active_pid=active_pid,
                 slug=metadata["slug"],
+                ai_title=metadata["ai_title"],
+                custom_title=metadata["custom_title"],
+                agent_name=metadata["agent_name"],
                 last_user_message=metadata["last_user_message"],
                 last_assistant_message=metadata["last_assistant_message"],
                 last_prompt=metadata["last_prompt"],
@@ -489,6 +627,122 @@ def delete_session(session: SessionInfo) -> dict[str, bool]:
                     pass
 
     return results
+
+
+_WORKTREE_MARKER = "/.claude/worktrees/"
+
+
+def _area_and_leaf(real_path: str, home: str) -> dict:
+    """Classify a working directory into a top-level "area" group and a leaf label.
+
+    The area is the first folder under the user's home (e.g. 'zipstack',
+    'unstract-repos', 'personal'), or the parent directory for paths outside
+    home. The leaf is the working directory itself, labelled by its basename
+    with a short parent hint when it is nested below the area. This keeps the
+    sidebar to two shallow levels keyed on the real working dir, instead of a
+    deep mirror of the filesystem.
+    """
+    p = real_path.rstrip("/") or "/"
+    is_worktree = _WORKTREE_MARKER in p
+
+    if p == home:
+        return {"area_path": home, "area_label": "~", "leaf_label": "(home)",
+                "hint": "", "is_root": True, "worktree": False}
+
+    if p.startswith(home + "/"):
+        rel_segs = p[len(home) + 1:].split("/")
+        area_path = f"{home}/{rel_segs[0]}"
+        area_label = rel_segs[0]
+    else:
+        segs_all = [s for s in p.split("/") if s]
+        if len(segs_all) <= 1:
+            area_path, area_label = "/", "/"
+        else:
+            area_path = "/" + "/".join(segs_all[:-1])
+            area_label = "/".join(segs_all[:-1])
+
+    is_root = p == area_path
+    within = p[len(area_path):].strip("/")
+    within_segs = within.split("/") if within else []
+    leaf_label = within_segs[-1] if within_segs else (area_label.rsplit("/", 1)[-1] or area_label)
+
+    hint = ""
+    if is_worktree:
+        # Belongs to the repo/checkout sitting just before the worktrees dir.
+        repo = p.split(_WORKTREE_MARKER)[0].rstrip("/").rsplit("/", 1)[-1]
+        hint = f"…/{repo}"
+    elif len(within_segs) > 1:
+        hint = f"…/{within_segs[-2]}"
+
+    return {"area_path": area_path, "area_label": area_label, "leaf_label": leaf_label,
+            "hint": hint, "is_root": is_root, "worktree": is_worktree}
+
+
+def build_project_tree(sessions: list[SessionInfo]) -> list[dict]:
+    """Build a two-level project sidebar: area groups → working-dir leaves.
+
+    Each leaf is a real working directory (the folder you ``cd`` into), labelled
+    by its basename. Selecting an area filters to every session beneath it
+    (prefix match); selecting a leaf filters to that exact working dir. Sorted by
+    most-recent activity throughout.
+    """
+    from collections import OrderedDict
+
+    home = str(Path.home())
+    min_dt = datetime.min.replace(tzinfo=timezone.utc)
+
+    # Aggregate per real working directory (the leaf).
+    leaves: "OrderedDict[str, dict]" = OrderedDict()
+    for s in sessions:
+        rp = s.real_path.rstrip("/") or "/"
+        leaf = leaves.get(rp)
+        if leaf is None:
+            meta = _area_and_leaf(rp, home)
+            leaf = leaves[rp] = {
+                "path": rp, "is_group": False, "children": [],
+                "name": meta["leaf_label"], "hint": meta["hint"],
+                "is_root": meta["is_root"], "worktree": meta["worktree"],
+                "area_path": meta["area_path"], "area_label": meta["area_label"],
+                "count": 0, "size": 0, "active": 0, "_last": None,
+            }
+        leaf["count"] += 1
+        leaf["size"] += s.total_size
+        if s.is_active:
+            leaf["active"] += 1
+        la = s.last_activity or s.started_at
+        if la and (leaf["_last"] is None or la > leaf["_last"]):
+            leaf["_last"] = la
+
+    # Group leaves into areas.
+    areas: "OrderedDict[str, dict]" = OrderedDict()
+    for leaf in leaves.values():
+        area = areas.get(leaf["area_path"])
+        if area is None:
+            area = areas[leaf["area_path"]] = {
+                "path": leaf["area_path"], "name": leaf["area_label"], "is_group": True,
+                "hint": "", "worktree": False, "is_root": False,
+                "count": 0, "size": 0, "active": 0, "_last": None, "children": [],
+            }
+        area["children"].append(leaf)
+        area["count"] += leaf["count"]
+        area["size"] += leaf["size"]
+        area["active"] += leaf["active"]
+        if leaf["_last"] and (area["_last"] is None or leaf["_last"] > area["_last"]):
+            area["_last"] = leaf["_last"]
+
+    def _finalize(node: dict) -> dict:
+        # Sort children by recency while their sort key is still present.
+        node["children"].sort(key=lambda c: c["_last"] or min_dt, reverse=True)
+        node["size_str"] = _format_size(node["size"])
+        node["last_activity"] = node["_last"].isoformat() if node["_last"] else None
+        for key in ("_last", "area_path", "area_label"):
+            node.pop(key, None)
+        for child in node["children"]:
+            _finalize(child)
+        return node
+
+    result = sorted(areas.values(), key=lambda a: a["_last"] or min_dt, reverse=True)
+    return [_finalize(a) for a in result]
 
 
 def get_summary_stats(sessions: list[SessionInfo]) -> dict:

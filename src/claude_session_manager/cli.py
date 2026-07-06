@@ -28,29 +28,30 @@ def list_sessions():
     console.print(
         f"  {stats['total_sessions']} sessions | "
         f"{stats['total_projects']} projects | "
-        f"{stats['total_size']} total | "
-        f"{stats['active_sessions']} active\n"
+        f"[green]{stats['active_sessions']} active[/] | "
+        f"[dim]{stats['total_size']}[/]\n"
     )
 
     table = Table(show_header=True, header_style="bold cyan", show_lines=False)
     table.add_column(" ", width=1, no_wrap=True)
-    table.add_column("Date", style="dim", no_wrap=True)
-    table.add_column("Project", style="blue", no_wrap=True, max_width=30)
-    table.add_column("Branch", style="yellow", no_wrap=True, max_width=15)
-    table.add_column("Topic", no_wrap=True, max_width=50, overflow="ellipsis")
+    table.add_column("When", style="dim", no_wrap=True)
+    table.add_column("Session", no_wrap=True, max_width=54, overflow="ellipsis")
+    table.add_column("Project", style="blue", no_wrap=True, max_width=22)
+    table.add_column("Branch", style="yellow", no_wrap=True, max_width=12)
     table.add_column("Msgs", justify="right", no_wrap=True)
-    table.add_column("Size", justify="right", style="dim", no_wrap=True)
 
     for s in sessions:
         status = "[green]>[/]" if s.is_active else " "
+        title = s.display_title
+        if s.custom_title and s.custom_title != s.display_title:
+            title = f"[magenta]{s.custom_title}[/] [dim]·[/] {s.display_title}"
         table.add_row(
             status,
-            s.started_str,
-            _short_project(s.project_path),
+            s.when_str,
+            title,
+            s.project_leaf,
             s.git_branch or "-",
-            s.topic,
             str(s.total_messages),
-            s.size_str,
         )
 
     console.print(table)
@@ -72,8 +73,8 @@ def show_stats():
 
     project_stats = defaultdict(lambda: {"count": 0, "size": 0})
     for s in sessions:
-        project_stats[s.project_path]["count"] += 1
-        project_stats[s.project_path]["size"] += s.total_size
+        project_stats[s.real_path_short]["count"] += 1
+        project_stats[s.real_path_short]["size"] += s.total_size
 
     lines = [
         f"[bold]Total Sessions:[/]  {stats['total_sessions']}",
@@ -87,20 +88,11 @@ def show_stats():
 
     sorted_projects = sorted(project_stats.items(), key=lambda x: x[1]["size"], reverse=True)
     for proj, ps in sorted_projects:
-        lines.append(f"  {_short_project(proj)}: {ps['count']} sessions, {_format_size(ps['size'])}")
+        n = ps["count"]
+        noun = "session" if n == 1 else "sessions"
+        lines.append(f"  {proj}: {n} {noun}, {_format_size(ps['size'])}")
 
     console.print(Panel("\n".join(lines), title="[bold blue]Claude Sessions Stats[/]", border_style="blue"))
-
-
-def _short_project(path: str) -> str:
-    from pathlib import Path
-    home = str(Path.home())
-    if path.startswith(home):
-        path = "~" + path[len(home):]
-    parts = path.split("/")
-    if len(parts) > 4:
-        return "/".join(parts[:2]) + "/.../" + "/".join(parts[-2:])
-    return path
 
 
 def main():

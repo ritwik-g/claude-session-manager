@@ -8,13 +8,15 @@ https://github.com/user-attachments/assets/2cc5c650-0719-482d-ae73-da97af236cdf
 
 ## Features
 
-- **TUI** - Interactive terminal UI with project navigation, sorting, filtering, and session details (built with [Textual](https://textual.textualize.io/))
-- **Web UI** - Browser-based interface with project sidebar, bulk selection, and deletion
+- **Session titles & summaries** - Every session is identified by its name and AI-generated summary instead of a raw first message, so you can recognize sessions at a glance
+- **Folder-tree navigation** - Projects are shown as the real on-disk folder hierarchy (worktrees and sub-repos nest where they actually live), not a flat list
+- **TUI** - Interactive terminal UI with folder navigation, recency/title/size sorting, full-text filtering, and session details (built with [Textual](https://textual.textualize.io/))
+- **Web UI** - Browser-based interface with a collapsible folder tree, bulk selection, and deletion
 - **Quick list** - Fast terminal table output
 - **Stats** - Aggregate session statistics per project
 - **Usage breakdown** - Per-session token totals (input / output / cache read / cache write), cache hit ratio, model(s), and web tool counts in the detail view
 - **Session deletion** - Clean up old sessions (JSONL, tool results, file history)
-- **Search** - Filter by project, topic, branch, or message content
+- **Search** - Filter by title, summary, message content, project, or branch
 - **Resume** - Copy resume commands or open sessions directly in a new terminal
 
 ## Installation

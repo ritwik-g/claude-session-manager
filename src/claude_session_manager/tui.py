@@ -1,7 +1,6 @@
 """Textual TUI for managing Claude Code sessions."""
 
-from collections import defaultdict
-from pathlib import Path
+from datetime import datetime, timezone
 
 from textual import on
 from textual.app import App, ComposeResult
@@ -14,31 +13,26 @@ from textual.widgets import (
     Header,
     Input,
     Label,
-    ListItem,
-    ListView,
     Static,
+    Tree,
 )
 
 from .session_manager import (
     SessionInfo,
-    _format_size,
-    delete_session,
+    build_project_tree,
     discover_sessions,
+    delete_session,
     get_summary_stats,
 )
 
 ALL_PROJECTS = "__all__"
 
 
-def _short_project(path: str) -> str:
-    """Shorten project path for display."""
-    home = str(Path.home())
-    if path.startswith(home):
-        path = "~" + path[len(home):]
-    parts = path.split("/")
-    if len(parts) > 4:
-        return "/".join(parts[:2]) + "/.../" + "/".join(parts[-2:])
-    return path
+def _clip(text: str, width: int) -> str:
+    text = " ".join((text or "").split())
+    if len(text) > width:
+        return text[: width - 1] + "…"
+    return text
 
 
 class ConfirmDeleteScreen(ModalScreen[bool]):
@@ -49,10 +43,10 @@ class ConfirmDeleteScreen(ModalScreen[bool]):
         align: center middle;
     }
     #confirm-dialog {
-        width: 70;
+        width: 74;
         height: auto;
         max-height: 20;
-        border: thick $accent;
+        border: thick $error;
         background: $surface;
         padding: 1 2;
     }
@@ -90,11 +84,12 @@ class ConfirmDeleteScreen(ModalScreen[bool]):
         s = self.session
         with Container(id="confirm-dialog"):
             yield Label("[bold red]Delete this session?[/]")
-            yield Label(f"[bold]Project:[/] {s.project_path}")
-            yield Label(f"[bold]Topic:[/] {s.topic}")
-            yield Label(f"[bold]Date:[/] {s.started_str}")
-            yield Label(f"[bold]Size:[/] {s.size_str}")
-            yield Label(f"[bold]Messages:[/] {s.total_messages}")
+            yield Label(f"[bold]Session:[/] {s.display_title}")
+            yield Label(f"[bold]Project:[/] {s.real_path_short}")
+            yield Label(f"[bold]When:[/]    {s.when_str} ({s.started_str})")
+            yield Label(f"[bold]Size:[/]    {s.size_str}")
+            yield Label("")
+            yield Label("[dim]Deletes transcript, tool results, and file history. Cannot be undone.[/]")
             yield Label("")
             with Horizontal(id="confirm-buttons"):
                 yield Static("[bold red](y)[/] Yes, delete", classes="btn-danger")
@@ -125,6 +120,14 @@ class SessionDetailScreen(ModalScreen):
     #detail-dialog Label {
         width: 100%;
     }
+    #detail-title {
+        text-style: bold;
+        color: $accent;
+    }
+    #detail-meta {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
     """
 
     BINDINGS = [
@@ -137,22 +140,27 @@ class SessionDetailScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         s = self.session
-        active_str = f"[bold green]ACTIVE[/] (PID {s.active_pid})" if s.is_active else "[dim]Inactive[/]"
+        active_str = f"[bold green]● live[/] (PID {s.active_pid})" if s.is_active else "[dim]inactive[/]"
         with VerticalScroll(id="detail-dialog"):
-            yield Label("[bold underline]Session Details[/]")
-            yield Label("")
-            yield Label(f"[bold]Session ID:[/]  {s.session_id}")
+            yield Label(s.display_title, id="detail-title")
+            meta = f"{s.project_leaf} · {s.git_branch or 'no branch'} · {s.when_str} · {s.started_str}"
+            if s.agent_name:
+                meta += f" · agent: {s.agent_name}"
+            yield Label(meta, id="detail-meta")
             yield Label(f"[bold]Status:[/]      {active_str}")
-            yield Label(f"[bold]Project:[/]     {s.project_path}")
-            yield Label(f"[bold]Working Dir:[/] {s.cwd}")
-            yield Label(f"[bold]Git Branch:[/]  {s.git_branch or 'N/A'}")
+            if s.custom_title and s.custom_title != s.display_title:
+                yield Label(f"[bold]Name:[/]        {s.custom_title}")
+            if s.ai_title and s.ai_title != s.display_title:
+                yield Label(f"[bold]Summary:[/]     {s.ai_title}")
+            yield Label(f"[bold]Session ID:[/]  {s.session_id}")
+            yield Label(f"[bold]Working Dir:[/] {s.cwd or s.real_path}")
             yield Label(f"[bold]Version:[/]     {s.version or 'N/A'}")
             yield Label("")
             yield Label(f"[bold]Started:[/]     {s.started_str}")
-            yield Label(f"[bold]Duration:[/]    {s.duration_str}")
-            yield Label(f"[bold]Messages:[/]    {s.user_message_count} user / {s.assistant_message_count} assistant / {s.total_messages} total")
-            yield Label(f"[bold]JSONL Size:[/]  {s.file_size_str}")
-            yield Label(f"[bold]Total Size:[/]  {s.size_str}")
+            yield Label(f"[bold]Last active:[/] {s.last_activity_str}  [dim]({s.when_str})[/]")
+            yield Label(f"[bold]Active span:[/] {s.duration_str}  [dim]first → last message[/]")
+            yield Label(f"[bold]Messages:[/]    {s.user_message_count} user / {s.assistant_message_count} assistant")
+            yield Label(f"[bold]Disk size:[/]   {s.size_str}")
             yield Label("")
             yield Label("[bold underline]Usage / Context[/]")
             yield Label(f"[bold]Model(s):[/]      {s.models_str}")
@@ -174,8 +182,6 @@ class SessionDetailScreen(ModalScreen):
                 yield Label(f"[bold]Web Search:[/]    {s.web_search_count}")
             if s.web_fetch_count:
                 yield Label(f"[bold]Web Fetch:[/]     {s.web_fetch_count}")
-            if s.slug:
-                yield Label(f"[bold]Slug:[/]        {s.slug}")
             if s.pr_links:
                 yield Label("")
                 yield Label("[bold]PRs Created:[/]")
@@ -193,7 +199,7 @@ class SessionDetailScreen(ModalScreen):
                 yield Label("[bold]Last Assistant Response:[/]")
                 yield Label(s.last_assistant_message)
             yield Label("")
-            yield Label("[dim]Press Esc/Enter/q to close[/]")
+            yield Label("[dim]Press Esc/Enter/q to close · c copy resume · o open[/]")
 
     def action_close(self) -> None:
         self.dismiss()
@@ -207,7 +213,7 @@ class HelpScreen(ModalScreen):
         align: center middle;
     }
     #help-dialog {
-        width: 60;
+        width: 62;
         height: auto;
         max-height: 30;
         border: thick $accent;
@@ -231,20 +237,19 @@ class HelpScreen(ModalScreen):
             yield Label("[bold underline]Keybindings[/]")
             yield Label("")
             yield Label("[bold]Navigation[/]", classes="help-row")
-            yield Label("  [bold cyan]Tab[/]        Switch between projects and sessions", classes="help-row")
-            yield Label("  [bold cyan]Up/Down[/]    Navigate lists", classes="help-row")
-            yield Label("  [bold cyan]Enter[/]      Select project (left) / View details (right)", classes="help-row")
-            yield Label("  [bold cyan]Escape[/]     Clear filter / Close dialog", classes="help-row")
+            yield Label("  [bold cyan]Tab[/]        Switch between folder tree and sessions", classes="help-row")
+            yield Label("  [bold cyan]Up/Down[/]    Move · [bold cyan]Left/Right[/] collapse/expand folders", classes="help-row")
+            yield Label("  [bold cyan]Enter[/]      View session details", classes="help-row")
             yield Label("")
             yield Label("[bold]Actions[/]", classes="help-row")
             yield Label("  [bold cyan]c[/]          Copy resume command to clipboard", classes="help-row")
             yield Label("  [bold cyan]o[/]          Open session in a new terminal", classes="help-row")
             yield Label("  [bold cyan]d[/]          Delete selected session", classes="help-row")
             yield Label("  [bold cyan]r[/]          Refresh session list", classes="help-row")
-            yield Label("  [bold cyan]s[/]          Cycle sort (date/messages/size)", classes="help-row")
+            yield Label("  [bold cyan]s[/]          Cycle sort (recent/messages/size/title)", classes="help-row")
             yield Label("")
             yield Label("[bold]Search[/]", classes="help-row")
-            yield Label("  [bold cyan]/[/]          Focus filter input", classes="help-row")
+            yield Label("  [bold cyan]/[/]          Focus filter (title, summary, messages)", classes="help-row")
             yield Label("  [bold cyan]Escape[/]     Clear filter and return to table", classes="help-row")
             yield Label("")
             yield Label("[bold]Other[/]", classes="help-row")
@@ -267,14 +272,12 @@ class SessionManagerApp(App):
     }
     #stats-bar {
         height: 1;
-        dock: top;
         background: $accent;
         color: $text;
         padding: 0 2;
     }
     #filter-bar {
         height: 3;
-        dock: top;
         padding: 0 1;
     }
     #filter-bar Input {
@@ -284,7 +287,7 @@ class SessionManagerApp(App):
         height: 1fr;
     }
     #project-panel {
-        width: 30;
+        width: 38;
         border-right: solid $accent;
     }
     #project-panel-title {
@@ -294,11 +297,8 @@ class SessionManagerApp(App):
         text-style: bold;
         color: $accent;
     }
-    #project-list {
+    #project-tree {
         height: 1fr;
-    }
-    #project-list > ListItem {
-        padding: 0 1;
     }
     #session-panel {
         width: 1fr;
@@ -308,7 +308,6 @@ class SessionManagerApp(App):
     }
     #status-bar {
         height: 1;
-        dock: bottom;
         background: $panel;
         color: $text-muted;
         padding: 0 2;
@@ -334,27 +333,37 @@ class SessionManagerApp(App):
         Binding("q", "quit", "Quit"),
     ]
 
-    SORT_COLUMNS = ["date", "messages", "size"]
+    # (sort key, human label)
+    SORT_MODES = [
+        ("recent", "recent"),
+        ("messages", "messages"),
+        ("size", "size"),
+        ("title", "title"),
+    ]
 
     def __init__(self) -> None:
         super().__init__()
         self.sessions: list[SessionInfo] = []
         self.filtered_sessions: list[SessionInfo] = []
         self.filter_text: str = ""
-        self.sort_key: str = "date"
+        self.sort_key: str = "recent"
         self.sort_reverse: bool = True
-        self.selected_project: str = ALL_PROJECTS
-        self.project_keys: list[str] = []
+        self.selected_path: str = ALL_PROJECTS
+        self.selected_group: bool = True  # True = area (prefix); False = leaf working dir (exact)
+        self.selected_label: str = "All projects"
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield Static("", id="stats-bar")
         with Container(id="filter-bar"):
-            yield Input(placeholder="Type to filter sessions...", id="filter-input")
+            yield Input(placeholder="Search title, summary, message text, project...", id="filter-input")
         with Horizontal(id="main-content"):
             with Container(id="project-panel"):
                 yield Static(" Projects", id="project-panel-title")
-                yield ListView(id="project-list")
+                tree: Tree = Tree("All projects", id="project-tree")
+                tree.show_root = True
+                tree.guide_depth = 2
+                yield tree
             with Container(id="session-panel"):
                 yield DataTable(id="sessions-table", cursor_type="row")
         yield Static("", id="status-bar")
@@ -362,61 +371,70 @@ class SessionManagerApp(App):
 
     def on_mount(self) -> None:
         self._load_sessions()
-        self.query_one("#project-list", ListView).focus()
+        self.query_one("#project-tree", Tree).focus()
 
     def _load_sessions(self) -> None:
         self.sessions = discover_sessions()
-        self._rebuild_project_list()
+        self._rebuild_tree()
         self._apply_filter()
         self._update_stats()
 
-    def _rebuild_project_list(self) -> None:
-        """Build the project list from current sessions."""
-        project_data: dict[str, dict] = defaultdict(lambda: {"count": 0, "size": 0, "active": 0})
-        for s in self.sessions:
-            project_data[s.project_path]["count"] += 1
-            project_data[s.project_path]["size"] += s.total_size
-            if s.is_active:
-                project_data[s.project_path]["active"] += 1
-
-        sorted_projects = sorted(project_data.items(), key=lambda x: x[1]["size"], reverse=True)
-
-        lv = self.query_one("#project-list", ListView)
-        lv.clear()
-
+    def _rebuild_tree(self) -> None:
+        """Build the two-level project tree: area groups -> working-dir leaves."""
+        tree = self.query_one("#project-tree", Tree)
+        tree.clear()
         total = len(self.sessions)
-        total_size = _format_size(sum(s.total_size for s in self.sessions))
-        lv.append(ListItem(Label(f"[bold]All Projects[/] ({total}, {total_size})"), name=ALL_PROJECTS))
-        self.project_keys = [ALL_PROJECTS]
+        root = tree.root
+        root.set_label(f"[bold]All projects[/]  [dim]{total}[/]")
+        root.data = {"path": ALL_PROJECTS, "group": True}
 
-        for proj_path, info in sorted_projects:
-            short = _short_project(proj_path)
-            active_marker = " [green]*[/]" if info["active"] > 0 else ""
-            lv.append(ListItem(
-                Label(f"{short} ({info['count']}, {_format_size(info['size'])}){active_marker}"),
-                name=proj_path,
-            ))
-            self.project_keys.append(proj_path)
+        for area in build_project_tree(self.sessions):
+            adot = " [green]●[/]" if area["active"] else ""
+            area_node = root.add(
+                f"[bold]{area['name']}[/]{adot}  [dim]{area['count']}[/]",
+                data={"path": area["path"], "group": True},
+            )
+            for leaf in area["children"]:
+                ldot = " [green]●[/]" if leaf["active"] else ""
+                root_tag = " [dim]root[/]" if leaf["is_root"] else ""
+                worktree = " [yellow]⑂[/]" if leaf["worktree"] else ""
+                hint = f" [dim]{leaf['hint']}[/]" if leaf["hint"] else ""
+                area_node.add_leaf(
+                    f"{leaf['name']}{worktree}{root_tag}{hint}{ldot}  [dim]{leaf['count']}[/]",
+                    data={"path": leaf["path"], "group": False},
+                )
+            area_node.expand()
+
+        root.expand()
 
     def _apply_filter(self) -> None:
-        # Filter by selected project
-        if self.selected_project == ALL_PROJECTS:
+        # Filter by selected area (prefix) or exact working dir (leaf)
+        if self.selected_path == ALL_PROJECTS:
             sessions = list(self.sessions)
+        elif self.selected_group:
+            sessions = [
+                s for s in self.sessions
+                if s.real_path == self.selected_path
+                or s.real_path.startswith(self.selected_path + "/")
+            ]
         else:
-            sessions = [s for s in self.sessions if s.project_path == self.selected_project]
+            sessions = [s for s in self.sessions if s.real_path == self.selected_path]
 
-        # Filter by search text
+        # Filter by search text across meaningful fields
         if self.filter_text:
             ft = self.filter_text.lower()
             sessions = [
                 s for s in sessions
-                if ft in s.first_message.lower()
+                if ft in s.display_title.lower()
+                or ft in (s.subtitle or "").lower()
+                or ft in (s.ai_title or "").lower()
+                or ft in (s.custom_title or "").lower()
+                or ft in s.first_message.lower()
                 or ft in s.last_user_message.lower()
                 or ft in s.last_assistant_message.lower()
                 or ft in s.git_branch.lower()
                 or ft in s.session_id.lower()
-                or ft in s.cwd.lower()
-                or ft in s.project_path.lower()
+                or ft in s.real_path.lower()
             ]
 
         self.filtered_sessions = sessions
@@ -424,67 +442,71 @@ class SessionManagerApp(App):
         self._populate_table()
 
     def _sort_sessions(self) -> None:
-        from datetime import datetime, timezone
-
-        if self.sort_key == "date":
+        min_dt = datetime.min.replace(tzinfo=timezone.utc)
+        if self.sort_key == "recent":
             self.filtered_sessions.sort(
-                key=lambda s: s.started_at or datetime.min.replace(tzinfo=timezone.utc),
+                key=lambda s: s.last_activity or s.started_at or min_dt,
                 reverse=self.sort_reverse,
             )
         elif self.sort_key == "messages":
-            self.filtered_sessions.sort(
-                key=lambda s: s.total_messages,
-                reverse=self.sort_reverse,
-            )
+            self.filtered_sessions.sort(key=lambda s: s.total_messages, reverse=self.sort_reverse)
         elif self.sort_key == "size":
-            self.filtered_sessions.sort(
-                key=lambda s: s.total_size,
-                reverse=self.sort_reverse,
-            )
+            self.filtered_sessions.sort(key=lambda s: s.total_size, reverse=self.sort_reverse)
+        elif self.sort_key == "title":
+            self.filtered_sessions.sort(key=lambda s: s.display_title.lower(), reverse=self.sort_reverse)
 
     def _populate_table(self) -> None:
         table = self.query_one("#sessions-table", DataTable)
         table.clear(columns=True)
 
-        sort_indicators = {k: "" for k in self.SORT_COLUMNS}
-        arrow = " v" if self.sort_reverse else " ^"
-        sort_indicators[self.sort_key] = arrow
+        arrow = "▾" if self.sort_reverse else "▴"
+        when_h = f"When {arrow}" if self.sort_key == "recent" else "When"
+        session_h = f"Session {arrow}" if self.sort_key == "title" else "Session"
+        msgs_h = f"Msgs {arrow}" if self.sort_key == "messages" else "Msgs"
 
-        show_project = self.selected_project == ALL_PROJECTS
-        cols = [" ", f"Date{sort_indicators['date']}", "Branch", "Topic", "Last Response",
-                f"Msgs{sort_indicators['messages']}", f"Size{sort_indicators['size']}"]
+        show_project = self.selected_path == ALL_PROJECTS or len(
+            {s.real_path for s in self.filtered_sessions}
+        ) > 1
+
+        table.add_column(" ", width=1)
+        table.add_column(when_h, width=9)
+        table.add_column(session_h, width=64)
         if show_project:
-            cols.insert(2, "Project")
-        table.add_columns(*cols)
+            table.add_column("Project", width=22)
+        table.add_column("Br", width=8)
+        table.add_column(msgs_h, width=6)
 
+        prev_path = None
         for s in self.filtered_sessions:
-            status = "[green]>[/]" if s.is_active else " "
-            last_resp = s.last_assistant_message[:60] + "..." if len(s.last_assistant_message) > 60 else s.last_assistant_message
-            row = [
-                status,
-                s.started_str,
-                s.git_branch or "-",
-                s.topic,
-                last_resp or "-",
-                str(s.total_messages),
-                s.size_str,
-            ]
+            status = "[green]●[/]" if s.is_active else " "
+            title = _clip(s.display_title, 62)
+            if s.custom_title and s.custom_title != s.display_title:
+                title = f"[magenta]{_clip(s.custom_title, 18)}[/][dim] · [/]{_clip(s.display_title, 40)}"
+            row = [status, s.when_str, title]
             if show_project:
-                row.insert(2, _short_project(s.project_path))
-            # jsonl_path is unique per session file; session_id (the jsonl stem)
-            # can collide when the same session exists under multiple project dirs.
+                if s.real_path == prev_path:
+                    row.append("[dim]  ↳[/]")
+                else:
+                    row.append(f"[blue]{_clip(s.project_leaf, 20)}[/]")
+            row.append(s.git_branch or "-")
+            row.append(str(s.total_messages))
+            prev_path = s.real_path
+            # jsonl_path is unique per session file; session_id can collide when
+            # the same session exists under multiple project dirs.
             table.add_row(*row, key=str(s.jsonl_path))
 
     def _update_stats(self) -> None:
         stats = get_summary_stats(self.sessions)
-        proj_label = _short_project(self.selected_project) if self.selected_project != ALL_PROJECTS else "All"
+        sort_label = dict(self.SORT_MODES)[self.sort_key]
+        arrow = "▾" if self.sort_reverse else "▴"
         stats_bar = self.query_one("#stats-bar", Static)
         stats_bar.update(
             f" {stats['total_sessions']} sessions | "
             f"{stats['total_projects']} projects | "
-            f"{stats['total_size']} total | "
-            f"{stats['active_sessions']} active | "
-            f"Viewing: {proj_label} ({len(self.filtered_sessions)})"
+            f"[green]{stats['active_sessions']} active[/] | "
+            f"[dim]{stats['total_size']}[/] | "
+            f"View: {_clip(self.selected_label, 24)} ({len(self.filtered_sessions)}) | "
+            f"Sort: {sort_label} {arrow}"
         )
 
     def _set_status(self, message: str) -> None:
@@ -499,13 +521,17 @@ class SessionManagerApp(App):
             return self.filtered_sessions[table.cursor_row]
         return None
 
-    @on(ListView.Selected, "#project-list")
-    def on_project_selected(self, event: ListView.Selected) -> None:
-        name = event.item.name or ALL_PROJECTS
-        self.selected_project = name
+    @on(Tree.NodeHighlighted, "#project-tree")
+    def on_tree_highlight(self, event: Tree.NodeHighlighted) -> None:
+        data = event.node.data or {"path": ALL_PROJECTS, "group": True}
+        self.selected_path = data["path"]
+        self.selected_group = data["group"]
+        if self.selected_path == ALL_PROJECTS:
+            self.selected_label = "All projects"
+        else:
+            self.selected_label = self.selected_path.rstrip("/").rsplit("/", 1)[-1]
         self._apply_filter()
         self._update_stats()
-        self.query_one("#sessions-table", DataTable).focus()
 
     @on(Input.Changed, "#filter-input")
     def on_filter_changed(self, event: Input.Changed) -> None:
@@ -517,12 +543,12 @@ class SessionManagerApp(App):
         self.push_screen(HelpScreen())
 
     def action_switch_panel(self) -> None:
-        lv = self.query_one("#project-list", ListView)
+        tree = self.query_one("#project-tree", Tree)
         table = self.query_one("#sessions-table", DataTable)
-        if lv.has_focus:
+        if tree.has_focus:
             table.focus()
         else:
-            lv.focus()
+            tree.focus()
 
     def action_focus_filter(self) -> None:
         self.query_one("#filter-input", Input).focus()
@@ -541,12 +567,14 @@ class SessionManagerApp(App):
         self._set_status(f"Refreshed. Found {len(self.sessions)} sessions.")
 
     def action_cycle_sort(self) -> None:
-        idx = self.SORT_COLUMNS.index(self.sort_key)
-        next_idx = (idx + 1) % len(self.SORT_COLUMNS)
-        self.sort_key = self.SORT_COLUMNS[next_idx]
-        self.sort_reverse = True
+        keys = [k for k, _ in self.SORT_MODES]
+        idx = keys.index(self.sort_key)
+        self.sort_key = keys[(idx + 1) % len(keys)]
+        # Title reads best A→Z; the rest read best newest/biggest first.
+        self.sort_reverse = self.sort_key != "title"
         self._apply_filter()
-        self._set_status(f"Sorted by {self.sort_key}")
+        self._update_stats()
+        self._set_status(f"Sorted by {dict(self.SORT_MODES)[self.sort_key]}")
 
     @on(DataTable.RowSelected, "#sessions-table")
     def on_session_row_selected(self, event: DataTable.RowSelected) -> None:
@@ -589,7 +617,7 @@ class SessionManagerApp(App):
             self._set_status("No session selected")
             return
         cmd = f"claude --resume {session.session_id}"
-        cwd = session.cwd or str(Path.home())
+        cwd = session.cwd or session.real_path
         try:
             if platform.system() == "Darwin":
                 # Open a new Terminal.app tab and run the command

@@ -7,9 +7,10 @@ No external web framework dependencies.
 import json
 import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 from .session_manager import (
+    build_project_tree,
     delete_session,
     discover_sessions,
     get_summary_stats,
@@ -28,224 +29,194 @@ HTML_PAGE = r"""<!DOCTYPE html>
     --bg-highlight: #292e42;
     --border: #3b4261;
     --text: #c0caf5;
-    --text-muted: #565f89;
+    --text-muted: #7079a8;
+    --text-dim: #565f89;
     --accent: #7aa2f7;
     --green: #9ece6a;
     --red: #f7768e;
     --orange: #ff9e64;
     --yellow: #e0af68;
+    --purple: #bb9af7;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
 body {
-    font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     background: var(--bg);
     color: var(--text);
-    min-height: 100vh;
     display: flex;
     flex-direction: column;
-}
-.app-body {
-    display: flex;
-    flex: 1;
-    overflow: hidden;
-}
-#sidebar {
-    width: 260px;
-    min-width: 260px;
-    background: var(--bg-surface);
-    border-right: 1px solid var(--border);
-    overflow-y: auto;
-    padding: 0;
-}
-#sidebar h3 {
-    padding: 12px 16px 8px;
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-muted);
-}
-.project-item {
-    padding: 8px 16px;
-    cursor: pointer;
     font-size: 13px;
-    border-left: 3px solid transparent;
-    transition: all 0.1s;
 }
-.project-item:hover { background: var(--bg-highlight); }
-.project-item.active { background: var(--bg-highlight); border-left-color: var(--accent); color: var(--accent); }
-.project-item .proj-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.project-item .proj-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
-.main-content {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-}
+.mono { font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace; }
+.app-body { display: flex; flex: 1; overflow: hidden; }
+
+/* ---------- Header ---------- */
 header {
     background: var(--bg-surface);
     border-bottom: 1px solid var(--border);
-    padding: 16px 24px;
+    padding: 12px 20px;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    position: sticky;
-    top: 0;
-    z-index: 100;
+    flex-shrink: 0;
 }
-header h1 {
-    font-size: 18px;
-    font-weight: 600;
-    color: var(--accent);
-}
-.stats {
-    display: flex;
-    gap: 20px;
-    font-size: 13px;
-    color: var(--text-muted);
-}
+header h1 { font-size: 16px; font-weight: 600; color: var(--accent); letter-spacing: 0.02em; }
+.stats { display: flex; gap: 18px; font-size: 12.5px; color: var(--text-dim); align-items: baseline; }
 .stats .stat-value { color: var(--text); font-weight: 600; }
-.controls {
-    padding: 12px 24px;
-    display: flex;
-    gap: 12px;
-    align-items: center;
-    border-bottom: 1px solid var(--border);
+.stats .stat-active .stat-value { color: var(--green); }
+.stats .stat-size { color: var(--text-dim); }
+
+/* ---------- Sidebar / folder tree ---------- */
+#sidebar {
+    width: 300px;
+    min-width: 300px;
     background: var(--bg-surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.sidebar-head { padding: 12px 14px 8px; }
+.sidebar-head h3 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--text-dim); margin-bottom: 8px;
+}
+#proj-filter {
+    width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    padding: 6px 10px; border-radius: 6px; font-size: 12px; outline: none; font-family: inherit;
+}
+#proj-filter:focus { border-color: var(--accent); }
+#tree { flex: 1; overflow-y: auto; padding: 4px 6px 16px; }
+.tnode {
+    display: flex; align-items: center; gap: 4px; height: 26px;
+    border-radius: 6px; cursor: pointer; user-select: none; font-size: 12.5px;
+    padding-right: 8px;
+}
+.tnode:hover { background: var(--bg-highlight); }
+.tnode.sel { background: rgba(122,162,247,0.16); }
+.tnode.sel .tname { color: var(--accent); font-weight: 600; }
+.tnode .caret {
+    width: 14px; flex-shrink: 0; text-align: center; color: var(--text-dim);
+    font-size: 10px; cursor: pointer;
+}
+.tnode .tlabel { flex: 1; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.tnode .tname { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tnode.is-group .tname { color: var(--text-muted); }
+.tnode .tcount {
+    margin-left: auto; flex-shrink: 0; font-size: 11px; color: var(--text-dim);
+    background: rgba(255,255,255,0.05); padding: 1px 7px; border-radius: 10px;
+}
+.tnode.sel .tcount { background: rgba(122,162,247,0.22); color: var(--accent); }
+.tnode.is-group > .tlabel > .tname { font-weight: 600; }
+.tnode.is-leaf .tname { color: var(--text); font-weight: 400; }
+.tnode.is-leaf.sel .tname { color: var(--accent); font-weight: 600; }
+.tnode .thint { color: var(--text-dim); font-size: 11px; }
+.tnode .troot { color: var(--text-dim); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.04em; border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; margin-left: 2px; }
+.tnode .twt { color: var(--yellow); }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 5px var(--green); vertical-align: middle; }
+
+/* ---------- Main ---------- */
+.main-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.controls {
+    padding: 10px 18px; display: flex; gap: 10px; align-items: center;
+    border-bottom: 1px solid var(--border); background: var(--bg-surface); flex-shrink: 0;
 }
 #filter {
-    flex: 1;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 8px 12px;
-    border-radius: 6px;
-    font-family: inherit;
-    font-size: 13px;
-    outline: none;
+    flex: 1; min-width: 120px; background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); padding: 8px 12px; border-radius: 6px; font-family: inherit;
+    font-size: 13px; outline: none;
 }
 #filter:focus { border-color: var(--accent); }
-#filter::placeholder { color: var(--text-muted); }
+#filter::placeholder { color: var(--text-dim); }
+#result-count { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+.sort-wrap { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
+#sort-select {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    padding: 7px 8px; border-radius: 6px; font-family: inherit; font-size: 12.5px; cursor: pointer; outline: none;
+}
 .btn {
-    padding: 8px 16px;
-    border: 1px solid var(--border);
-    background: var(--bg);
-    color: var(--text);
-    border-radius: 6px;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 13px;
-    transition: all 0.15s;
+    padding: 7px 13px; border: 1px solid var(--border); background: var(--bg); color: var(--text);
+    border-radius: 6px; cursor: pointer; font-family: inherit; font-size: 12.5px; transition: all 0.12s; white-space: nowrap;
 }
 .btn:hover { background: var(--bg-highlight); border-color: var(--accent); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn-danger { border-color: var(--red); color: var(--red); }
 .btn-danger:hover { background: rgba(247, 118, 142, 0.15); }
-.btn-sm { padding: 4px 10px; font-size: 12px; }
-table {
-    width: 100%;
-    border-collapse: collapse;
-}
-col.col-topic { width: 25%; }
-col.col-last { width: 25%; }
-thead { position: sticky; top: 0; z-index: 10; }
-th {
-    background: var(--bg-surface);
-    padding: 10px 12px;
-    text-align: left;
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-muted);
-    border-bottom: 1px solid var(--border);
-    cursor: pointer;
-    user-select: none;
-    white-space: nowrap;
-}
-th:hover { color: var(--accent); }
-th.sorted { color: var(--accent); }
-th .arrow { font-size: 10px; margin-left: 4px; }
-td {
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--border);
-    font-size: 13px;
-    vertical-align: top;
-}
-tr:hover td { background: var(--bg-highlight); }
-tr.active td { border-left: 3px solid var(--green); }
-.project { color: var(--accent); font-weight: 500; }
-.branch { color: var(--orange); }
-.topic {
-    max-width: 350px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.size { color: var(--text-muted); text-align: right; }
-.msgs { text-align: right; }
-.date { white-space: nowrap; color: var(--text-muted); }
-.active-badge {
-    display: inline-block;
-    background: rgba(158, 206, 106, 0.2);
-    color: var(--green);
-    font-size: 11px;
-    padding: 2px 6px;
-    border-radius: 3px;
-    font-weight: 600;
-}
-.session-id {
-    font-size: 11px;
-    color: var(--text-muted);
-    font-family: inherit;
-}
-/* Modal */
-.modal-overlay {
-    display: none;
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.6);
-    z-index: 1000;
-    align-items: center;
-    justify-content: center;
-}
-.modal-overlay.active { display: flex; }
-.modal {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 24px;
-    width: 550px;
-    max-width: 90vw;
-    max-height: 80vh;
-    overflow-y: auto;
-}
-.modal h2 { font-size: 16px; margin-bottom: 16px; }
-.modal-detail { margin: 8px 0; font-size: 13px; }
-.modal-detail .label { color: var(--text-muted); display: inline-block; width: 120px; }
-.modal-actions { margin-top: 20px; display: flex; gap: 10px; justify-content: flex-end; }
-.toast {
-    position: fixed;
-    bottom: 24px;
-    right: 24px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    padding: 12px 20px;
-    border-radius: 6px;
-    font-size: 13px;
-    z-index: 2000;
-    animation: fadeIn 0.2s, fadeOut 0.3s 2.7s;
-    opacity: 0;
-}
-.toast.show { opacity: 1; }
-.toast.success { border-color: var(--green); color: var(--green); }
-.toast.error { border-color: var(--red); color: var(--red); }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
-.empty { text-align: center; padding: 40px; color: var(--text-muted); }
-.checkbox-col { width: 40px; text-align: center; }
-input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
+.btn-sm { padding: 4px 9px; font-size: 12px; }
+.btn-primary { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
+.btn-primary:hover { background: #8fb0f9; }
 #bulk-actions { display: none; gap: 10px; align-items: center; }
 #bulk-actions.active { display: flex; }
-#bulk-count { font-size: 13px; color: var(--accent); }
-.loading { text-align: center; padding: 40px; color: var(--text-muted); }
+#bulk-count { font-size: 12.5px; color: var(--accent); font-weight: 600; }
+
+/* ---------- Table ---------- */
+.table-wrap { flex: 1; overflow-y: auto; overflow-x: hidden; }
+table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+thead th {
+    position: sticky; top: 0; z-index: 10; background: var(--bg-surface);
+    padding: 9px 12px; text-align: left; font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--text-dim); border-bottom: 1px solid var(--border);
+    white-space: nowrap; user-select: none;
+}
+th.sortable { cursor: pointer; }
+th.sortable:hover { color: var(--accent); }
+th.sorted { color: var(--accent); }
+th .arrow { margin-left: 3px; }
+td { padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; overflow: hidden; }
+tbody tr { cursor: pointer; }
+tbody tr:hover td { background: var(--bg-highlight); }
+tr.is-active td.c-session { border-left: 2px solid var(--green); }
+
+.c-check { width: 34px; text-align: center; }
+.c-when { width: 90px; color: var(--text-dim); font-size: 12px; white-space: nowrap; }
+.c-project { width: 168px; }
+.c-msgs { width: 58px; text-align: right; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.c-actions { width: 132px; text-align: right; white-space: nowrap; }
+
+.s-title { font-size: 13.5px; color: var(--text); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 7px; }
+.s-title .live { display: inline-flex; align-items: center; gap: 4px; color: var(--green); font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; flex-shrink: 0; }
+.s-title .name-tag { flex-shrink: 0; font-size: 10px; color: var(--purple); border: 1px solid rgba(187,154,247,0.4); border-radius: 4px; padding: 0 5px; text-transform: none; letter-spacing: 0; font-weight: 500; }
+.s-sub { font-size: 11.5px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.c-project .proj-leaf { color: var(--accent); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.c-project .proj-branch { color: var(--orange); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.c-project.same-as-prev .proj-leaf, .c-project.same-as-prev .proj-branch { opacity: 0; }
+
+/* ---------- Modal ---------- */
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 1000; align-items: center; justify-content: center; }
+.modal-overlay.active { display: flex; }
+.modal {
+    background: var(--bg-surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 0; width: 620px; max-width: 92vw; max-height: 86vh; overflow: hidden;
+    display: flex; flex-direction: column;
+}
+.modal-head { padding: 18px 22px 14px; border-bottom: 1px solid var(--border); }
+.modal-head .m-title { font-size: 17px; font-weight: 600; color: var(--text); line-height: 1.3; }
+.modal-head .m-meta { margin-top: 6px; font-size: 12.5px; color: var(--text-dim); display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.modal-head .m-meta .chip { color: var(--accent); }
+.modal-head .m-meta .chip-branch { color: var(--orange); }
+.modal-head .m-meta .chip-live { color: var(--green); font-weight: 600; }
+.modal-head .m-meta .chip-agent { color: var(--purple); }
+.modal-body { padding: 16px 22px; overflow-y: auto; }
+.modal-actions { padding: 14px 22px; border-top: 1px solid var(--border); display: flex; gap: 10px; justify-content: flex-end; }
+.detail-grid { display: grid; grid-template-columns: max-content 1fr; gap: 5px 16px; font-size: 12.5px; align-items: baseline; }
+.detail-grid .label { color: var(--text-dim); }
+.detail-grid .val { color: var(--text); word-break: break-word; }
+.section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin: 16px 0 8px; }
+.msg-block { padding: 10px 12px; background: var(--bg); border-radius: 6px; font-size: 12.5px; white-space: pre-wrap; max-height: 160px; overflow-y: auto; line-height: 1.5; }
+.msg-block.mono { font-size: 12px; }
+hr.divider { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
+
+.toast {
+    position: fixed; bottom: 24px; right: 24px; background: var(--bg-surface); border: 1px solid var(--border);
+    padding: 11px 18px; border-radius: 8px; font-size: 13px; z-index: 2000; opacity: 0;
+    transition: opacity 0.2s, transform 0.2s; transform: translateY(8px); pointer-events: none;
+}
+.toast.show { opacity: 1; transform: translateY(0); }
+.toast.success { border-color: var(--green); }
+.toast.error { border-color: var(--red); color: var(--red); }
+.empty, .loading { text-align: center; padding: 48px 20px; color: var(--text-dim); }
+input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; width: 15px; height: 15px; }
 </style>
 </head>
 <body>
@@ -255,32 +226,50 @@ input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
 </header>
 <div class="app-body">
 <div id="sidebar">
-    <h3>Projects</h3>
-    <div id="project-list"></div>
+    <div class="sidebar-head">
+        <h3>Projects</h3>
+        <input type="text" id="proj-filter" placeholder="Jump to folder...">
+    </div>
+    <div id="tree"><div class="loading">Loading...</div></div>
 </div>
 <div class="main-content">
 <div class="controls">
-    <input type="text" id="filter" placeholder="Filter by topic, branch...">
+    <input type="text" id="filter" placeholder="Search title, summary, message text, project, branch...">
+    <span id="result-count"></span>
+    <div class="sort-wrap">
+        <label for="sort-select">Sort</label>
+        <select id="sort-select">
+            <option value="recent">Most recent</option>
+            <option value="title">Title (A–Z)</option>
+            <option value="project">Project</option>
+            <option value="messages">Messages</option>
+            <option value="size">Disk size</option>
+        </select>
+    </div>
     <div id="bulk-actions">
         <span id="bulk-count">0 selected</span>
-        <button class="btn btn-danger btn-sm" onclick="bulkDelete()">Delete Selected</button>
+        <button class="btn btn-danger btn-sm" onclick="bulkDelete()">Delete selected</button>
     </div>
     <button class="btn" onclick="refresh()">Refresh</button>
 </div>
-<div style="flex:1;overflow:auto">
+<div class="table-wrap">
 <table>
     <thead id="table-head"></thead>
     <tbody id="session-list">
-        <tr><td colspan="9" class="loading">Loading sessions...</td></tr>
+        <tr><td class="loading">Loading sessions...</td></tr>
     </tbody>
 </table>
+</div>
+</div><!-- /main-content -->
+</div><!-- /app-body -->
 
 <!-- Detail Modal -->
 <div class="modal-overlay" id="detail-modal">
     <div class="modal">
-        <h2>Session Details</h2>
-        <div id="detail-content"></div>
+        <div class="modal-head" id="detail-head"></div>
+        <div class="modal-body" id="detail-content"></div>
         <div class="modal-actions">
+            <button class="btn btn-primary" id="detail-resume">Copy resume command</button>
             <button class="btn" onclick="closeModal('detail-modal')">Close</button>
         </div>
     </div>
@@ -288,72 +277,40 @@ input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
 
 <!-- Delete Confirm Modal -->
 <div class="modal-overlay" id="delete-modal">
-    <div class="modal">
-        <h2 style="color: var(--red)">Confirm Delete</h2>
-        <div id="delete-content"></div>
+    <div class="modal" style="width:480px">
+        <div class="modal-head"><div class="m-title" style="color:var(--red)">Delete this session?</div></div>
+        <div class="modal-body" id="delete-content"></div>
         <div class="modal-actions">
             <button class="btn" onclick="closeModal('delete-modal')">Cancel</button>
-            <button class="btn btn-danger" id="confirm-delete-btn">Delete</button>
+            <button class="btn btn-danger" id="confirm-delete-btn">Delete permanently</button>
         </div>
     </div>
 </div>
 
 <div class="toast" id="toast"></div>
-</div><!-- /table wrapper -->
-</div><!-- /main-content -->
-</div><!-- /app-body -->
 
 <script>
 let sessions = [];
-let sortKey = 'date';
+let tree = [];
+let sortKey = 'recent';
 let sortReverse = true;
 let selected = new Set();
-let selectedProject = '__all__';
+let selectedPath = '__all__';
+let selectedGroup = true; // true = area group (prefix match); false = leaf working dir (exact)
+let expanded = null;      // Set of expanded area paths; null until first load
+let projFilter = '';
 
 async function fetchSessions() {
     const resp = await fetch('/api/sessions');
     const data = await resp.json();
     sessions = data.sessions;
+    tree = data.tree || [];
+    if (expanded === null) {
+        // Default: expand the top-level folders so recent projects are visible.
+        expanded = new Set(tree.map(n => n.path));
+    }
     updateStats(data.stats);
-    renderSidebar();
-    renderTable();
-}
-
-function renderSidebar() {
-    const projects = {};
-    sessions.forEach(s => {
-        if (!projects[s.project_path]) projects[s.project_path] = { count: 0, size: 0, active: 0 };
-        projects[s.project_path].count++;
-        projects[s.project_path].size += s.total_size;
-        if (s.is_active) projects[s.project_path].active++;
-    });
-    const sorted = Object.entries(projects).sort((a, b) => b[1].size - a[1].size);
-    const container = document.getElementById('project-list');
-    let html = `<div class="project-item ${selectedProject === '__all__' ? 'active' : ''}" onclick="selectProject('__all__')">
-        <span class="proj-name">All Projects</span>
-        <span class="proj-meta">${sessions.length} sessions, ${formatSize(sessions.reduce((a,s) => a + s.total_size, 0))}</span>
-    </div>`;
-    sorted.forEach(([path, info]) => {
-        const active = selectedProject === path ? ' active' : '';
-        const marker = info.active > 0 ? ' <span style="color:var(--green)">*</span>' : '';
-        html += `<div class="project-item${active}" onclick="selectProject('${escapeHtml(path)}')">
-            <span class="proj-name">${escapeHtml(shortProject(path))}${marker}</span>
-            <span class="proj-meta">${info.count} sessions, ${formatSize(info.size)}</span>
-        </div>`;
-    });
-    container.innerHTML = html;
-}
-
-function formatSize(bytes) {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
-    if (bytes < 1024*1024*1024) return (bytes/(1024*1024)).toFixed(1) + ' MB';
-    return (bytes/(1024*1024*1024)).toFixed(1) + ' GB';
-}
-
-function selectProject(path) {
-    selectedProject = path;
-    renderSidebar();
+    renderTree();
     renderTable();
 }
 
@@ -361,31 +318,102 @@ function updateStats(stats) {
     document.getElementById('stats').innerHTML =
         `<span><span class="stat-value">${stats.total_sessions}</span> sessions</span>` +
         `<span><span class="stat-value">${stats.total_projects}</span> projects</span>` +
-        `<span><span class="stat-value">${stats.total_size}</span> total</span>` +
-        `<span><span class="stat-value">${stats.active_sessions}</span> active</span>`;
+        `<span class="stat-active"><span class="stat-value">${stats.active_sessions}</span> active</span>` +
+        `<span class="stat-size">${stats.total_size}</span>`;
+}
+
+/* ---------------- Sidebar folder tree ---------------- */
+function areaHit(area, f) {
+    return (area.name || '').toLowerCase().includes(f) || (area.path || '').toLowerCase().includes(f);
+}
+function leafHit(leaf, f) {
+    return (leaf.name || '').toLowerCase().includes(f)
+        || (leaf.hint || '').toLowerCase().includes(f)
+        || (leaf.path || '').toLowerCase().includes(f);
+}
+
+function renderTree() {
+    const container = document.getElementById('tree');
+    const total = sessions.length;
+    const allSel = selectedPath === '__all__' ? ' sel' : '';
+    let html = `<div class="tnode${allSel}" data-path="__all__" data-group="1" style="padding-left:6px">
+        <span class="caret"></span>
+        <span class="tlabel"><span class="tname">All projects</span><span class="tcount">${total}</span></span>
+    </div>`;
+
+    for (const area of tree) {
+        const hit = !projFilter || areaHit(area, projFilter);
+        const leaves = area.children.filter(l => !projFilter || hit || leafHit(l, projFilter));
+        if (projFilter && !hit && leaves.length === 0) continue;
+
+        const isExp = expanded.has(area.path) || projFilter !== '';
+        const sel = (selectedGroup && selectedPath === area.path) ? ' sel' : '';
+        const dot = area.active > 0 ? ' <span class="dot" title="has a live session"></span>' : '';
+        html += `<div class="tnode is-group${sel}" data-path="${escAttr(area.path)}" data-group="1" style="padding-left:6px">
+            <span class="caret" data-toggle="${escAttr(area.path)}">${isExp ? '▾' : '▸'}</span>
+            <span class="tlabel"><span class="tname">${escapeHtml(area.name)}${dot}</span><span class="tcount">${area.count}</span></span>
+        </div>`;
+        if (!isExp) continue;
+        for (const leaf of leaves) {
+            const lsel = (!selectedGroup && selectedPath === leaf.path) ? ' sel' : '';
+            const ldot = leaf.active > 0 ? ' <span class="dot" title="has a live session"></span>' : '';
+            const root = leaf.is_root ? ' <span class="troot">root</span>' : '';
+            const wt = leaf.worktree ? ' <span class="twt" title="git worktree">⑂</span>' : '';
+            const hint = leaf.hint ? ` <span class="thint">${escapeHtml(leaf.hint)}</span>` : '';
+            html += `<div class="tnode is-leaf${lsel}" data-path="${escAttr(leaf.path)}" data-group="0" style="padding-left:28px">
+                <span class="tlabel"><span class="tname">${escapeHtml(leaf.name)}${wt}${root}${hint}${ldot}</span><span class="tcount">${leaf.count}</span></span>
+            </div>`;
+        }
+    }
+    container.innerHTML = html;
+
+    container.querySelectorAll('[data-toggle]').forEach(el => {
+        el.addEventListener('click', e => {
+            e.stopPropagation();
+            const p = el.dataset.toggle;
+            if (expanded.has(p)) expanded.delete(p); else expanded.add(p);
+            renderTree();
+        });
+    });
+    container.querySelectorAll('[data-path]').forEach(el => {
+        el.addEventListener('click', () => {
+            selectedPath = el.dataset.path;
+            selectedGroup = el.dataset.group === '1';
+            renderTree();
+            renderTable();
+        });
+    });
+}
+
+/* ---------------- Table ---------------- */
+function matchesSelected(s) {
+    if (selectedPath === '__all__') return true;
+    if (selectedGroup) return s.real_path === selectedPath || s.real_path.startsWith(selectedPath + '/');
+    return s.real_path === selectedPath;   // leaf = exact working dir
 }
 
 function getFiltered() {
-    const ft = document.getElementById('filter').value.toLowerCase();
-    let filtered = sessions;
-    if (selectedProject !== '__all__') {
-        filtered = filtered.filter(s => s.project_path === selectedProject);
-    }
+    const ft = document.getElementById('filter').value.toLowerCase().trim();
+    let filtered = sessions.filter(matchesSelected);
     if (ft) {
         filtered = filtered.filter(s =>
-            s.project_path.toLowerCase().includes(ft) ||
-            s.first_message.toLowerCase().includes(ft) ||
-            s.last_user_message.toLowerCase().includes(ft) ||
-            s.last_assistant_message.toLowerCase().includes(ft) ||
-            s.git_branch.toLowerCase().includes(ft) ||
-            s.session_id.toLowerCase().includes(ft)
+            (s.display_title || '').toLowerCase().includes(ft) ||
+            (s.subtitle || '').toLowerCase().includes(ft) ||
+            (s.ai_title || '').toLowerCase().includes(ft) ||
+            (s.custom_title || '').toLowerCase().includes(ft) ||
+            (s.first_message || '').toLowerCase().includes(ft) ||
+            (s.last_user_message || '').toLowerCase().includes(ft) ||
+            (s.last_assistant_message || '').toLowerCase().includes(ft) ||
+            (s.real_path_short || '').toLowerCase().includes(ft) ||
+            (s.git_branch || '').toLowerCase().includes(ft) ||
+            (s.session_id || '').toLowerCase().includes(ft)
         );
     }
-    // Sort
-    filtered.sort((a, b) => {
+    filtered = filtered.slice().sort((a, b) => {
         let va, vb;
-        if (sortKey === 'date') { va = a.started_at || ''; vb = b.started_at || ''; }
-        else if (sortKey === 'project') { va = a.project_path; vb = b.project_path; }
+        if (sortKey === 'recent') { va = a.last_activity || a.started_at || ''; vb = b.last_activity || b.started_at || ''; }
+        else if (sortKey === 'title') { va = (a.display_title || '').toLowerCase(); vb = (b.display_title || '').toLowerCase(); }
+        else if (sortKey === 'project') { va = a.real_path; vb = b.real_path; }
         else if (sortKey === 'messages') { va = a.total_messages; vb = b.total_messages; }
         else if (sortKey === 'size') { va = a.total_size; vb = b.total_size; }
         if (va < vb) return sortReverse ? 1 : -1;
@@ -395,78 +423,89 @@ function getFiltered() {
     return filtered;
 }
 
-function renderTable() {
-    const filtered = getFiltered();
-    const showProject = selectedProject === '__all__';
-    const colCount = showProject ? 9 : 8;
-
-    // Build dynamic header
+function renderHead(showProject) {
+    const arrow = key => sortKey === key ? `<span class="arrow">${sortReverse ? '▾' : '▴'}</span>` : '';
+    const cls = key => 'sortable' + (sortKey === key ? ' sorted' : '');
+    let h = `<tr>
+        <th class="c-check"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)"></th>
+        <th class="c-when ${cls('recent')}" data-sort="recent">When ${arrow('recent')}</th>
+        <th class="${cls('title')}" data-sort="title">Session ${arrow('title')}</th>`;
+    if (showProject) h += `<th class="c-project ${cls('project')}" data-sort="project">Project ${arrow('project')}</th>`;
+    h += `<th class="c-msgs ${cls('messages')}" data-sort="messages">Msgs ${arrow('messages')}</th>
+        <th class="c-actions">Actions</th></tr>`;
     const thead = document.getElementById('table-head');
-    const arrow = key => sortKey === key ? `<span class="arrow">${sortReverse ? 'v' : '^'}</span>` : '';
-    const sorted = key => sortKey === key ? ' class="sorted"' : '';
-    let hdr = `<tr>
-        <th class="checkbox-col" style="width:40px"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)"></th>
-        <th data-sort="date"${sorted('date')} style="width:130px">Date ${arrow('date')}</th>`;
-    if (showProject) hdr += `<th data-sort="project"${sorted('project')} style="width:160px">Project ${arrow('project')}</th>`;
-    hdr += `<th style="width:90px">Branch</th>
-        <th>Topic</th>
-        <th>Last Response</th>
-        <th data-sort="messages"${sorted('messages')} style="width:50px;text-align:right">Msgs ${arrow('messages')}</th>
-        <th data-sort="size"${sorted('size')} style="width:70px;text-align:right">Size ${arrow('size')}</th>
-        <th style="width:160px">Actions</th></tr>`;
-    thead.innerHTML = hdr;
-
-    // Re-bind sort click handlers
+    thead.innerHTML = h;
     thead.querySelectorAll('th[data-sort]').forEach(th => {
         th.addEventListener('click', () => {
             const key = th.dataset.sort;
             if (sortKey === key) sortReverse = !sortReverse;
-            else { sortKey = key; sortReverse = key !== 'project'; }
+            else { sortKey = key; sortReverse = (key === 'recent' || key === 'messages' || key === 'size'); }
+            document.getElementById('sort-select').value = key;
             renderTable();
         });
     });
+}
+
+function renderTable() {
+    const filtered = getFiltered();
+    const distinctProjects = new Set(filtered.map(s => s.real_path));
+    const showProject = distinctProjects.size > 1;
+    renderHead(showProject);
+
+    document.getElementById('result-count').textContent =
+        `${filtered.length} of ${sessions.length}`;
 
     const tbody = document.getElementById('session-list');
     if (filtered.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="${colCount}" class="empty">No sessions found</td></tr>`;
+        tbody.innerHTML = `<tr><td class="empty" colspan="6">No sessions match.</td></tr>`;
+        updateBulkActions();
         return;
     }
+    let prevPath = null;
     tbody.innerHTML = filtered.map(s => {
-        const active = s.is_active ? ' active' : '';
-        const badge = s.is_active ? `<span class="active-badge">ACTIVE</span>` : '';
         const checked = selected.has(s.session_id) ? 'checked' : '';
-        const deleteDisabled = s.is_active ? 'disabled title="Cannot delete active session"' : '';
-        const lastResp = s.last_assistant_message ? (s.last_assistant_message.length > 60 ? s.last_assistant_message.substring(0, 60) + '...' : s.last_assistant_message) : '-';
-        let row = `<tr class="${active}">
-            <td class="checkbox-col"><input type="checkbox" ${checked} ${s.is_active ? 'disabled' : ''} onchange="toggleSelect('${s.session_id}', this)"></td>
-            <td class="date">${s.started_str} ${badge}</td>`;
-        if (showProject) row += `<td class="project">${shortProject(s.project_path)}</td>`;
-        row += `<td class="branch">${s.git_branch || '-'}</td>
-            <td class="topic" title="${escapeHtml(s.first_message)}">${escapeHtml(s.topic)}</td>
-            <td class="topic" title="${escapeHtml(s.last_assistant_message)}">${escapeHtml(lastResp)}</td>
-            <td class="msgs">${s.total_messages}</td>
-            <td class="size">${s.size_str}</td>
-            <td style="white-space:nowrap">
-                <button class="btn btn-sm" onclick="copyResume('${s.session_id}')" title="Copy cd + resume command">Copy</button>
-                <button class="btn btn-sm" onclick="showDetail('${s.session_id}')">Info</button>
-                <button class="btn btn-sm btn-danger" onclick="confirmDelete('${s.session_id}')" ${deleteDisabled}>Del</button>
+        const live = s.is_active ? `<span class="live">● live</span>` : '';
+        const title = s.display_title;
+        const nameTag = (s.custom_title && s.custom_title !== title) ? `<span class="name-tag" title="named session">${escapeHtml(s.custom_title)}</span>` : '';
+        const sub = s.subtitle ? `<div class="s-sub" title="${escAttr(s.subtitle)}">${escapeHtml(clip(s.subtitle, 120))}</div>` : '';
+        let projCell = '';
+        if (showProject) {
+            const same = s.real_path === prevPath ? ' same-as-prev' : '';
+            projCell = `<td class="c-project${same}">
+                <div class="proj-leaf" title="${escAttr(s.real_path_short)}">${escapeHtml(s.project_leaf)}</div>
+                <div class="proj-branch">${escapeHtml(s.git_branch || '-')}</div>
+            </td>`;
+        }
+        prevPath = s.real_path;
+        return `<tr class="${s.is_active ? 'is-active' : ''}" onclick="showDetail('${s.session_id}')">
+            <td class="c-check" onclick="event.stopPropagation()"><input type="checkbox" ${checked} ${s.is_active ? 'disabled title="Cannot delete active session"' : ''} onchange="toggleSelect('${s.session_id}', this)"></td>
+            <td class="c-when" title="${escAttr(s.last_activity_str)}">${escapeHtml(s.when_str)}</td>
+            <td class="c-session">
+                <div class="s-title">${nameTag}<span style="overflow:hidden;text-overflow:ellipsis">${escapeHtml(title)}</span>${live}</div>
+                ${sub}
+            </td>
+            ${projCell}
+            <td class="c-msgs" title="${s.user_message_count} user / ${s.assistant_message_count} assistant">${s.total_messages}</td>
+            <td class="c-actions" onclick="event.stopPropagation()">
+                <button class="btn btn-sm" onclick="copyResume('${s.session_id}')" title="Copy cd + resume command">Resume</button>
+                <button class="btn btn-sm btn-danger" onclick="confirmDelete('${s.session_id}')" ${s.is_active ? 'disabled' : ''}>Del</button>
             </td>
         </tr>`;
-        return row;
     }).join('');
     updateBulkActions();
 }
 
-function shortProject(path) {
-    const home = '/Users/' + path.split('/')[2];
-    if (path.startsWith(home)) path = '~' + path.substring(home.length);
-    const parts = path.split('/');
-    if (parts.length > 4) return parts.slice(0,2).join('/') + '/.../' + parts.slice(-2).join('/');
-    return path;
-}
-
+/* ---------------- Helpers ---------------- */
+function clip(s, n) { return s.length > n ? s.substring(0, n - 1) + '…' : s; }
 function escapeHtml(s) {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function escAttr(s) { return escapeHtml(s).replace(/'/g, '&#39;'); }
+function formatSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes/1024).toFixed(1) + ' KB';
+    if (bytes < 1073741824) return (bytes/1048576).toFixed(1) + ' MB';
+    return (bytes/1073741824).toFixed(1) + ' GB';
 }
 
 function toggleSelect(id, cb) {
@@ -475,158 +514,162 @@ function toggleSelect(id, cb) {
 }
 function toggleSelectAll(cb) {
     const filtered = getFiltered();
-    if (cb.checked) {
-        filtered.forEach(s => { if (!s.is_active) selected.add(s.session_id); });
-    } else {
-        selected.clear();
-    }
+    if (cb.checked) filtered.forEach(s => { if (!s.is_active) selected.add(s.session_id); });
+    else selected.clear();
     renderTable();
 }
 function updateBulkActions() {
     const ba = document.getElementById('bulk-actions');
-    const count = selected.size;
-    if (count > 0) {
-        ba.classList.add('active');
-        document.getElementById('bulk-count').textContent = `${count} selected`;
-    } else {
-        ba.classList.remove('active');
-    }
+    if (selected.size > 0) { ba.classList.add('active'); document.getElementById('bulk-count').textContent = `${selected.size} selected`; }
+    else ba.classList.remove('active');
 }
 
 function clipCopy(text, label) {
-    navigator.clipboard.writeText(text).then(() => {
-        showToast('Copied: ' + label, 'success');
-    }).catch(() => {
+    navigator.clipboard.writeText(text).then(() => showToast('Copied: ' + label, 'success')).catch(() => {
         const ta = document.createElement('textarea');
-        ta.value = text;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
+        ta.value = text; document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); document.body.removeChild(ta);
         showToast('Copied: ' + label, 'success');
     });
 }
-
+function resumeCommand(s) {
+    return s && s.cwd ? `cd ${s.cwd} && claude --resume ${s.session_id}` : `claude --resume ${s.session_id}`;
+}
 function copyResume(id) {
     const s = sessions.find(x => x.session_id === id);
-    const cmd = s && s.cwd ? `cd ${s.cwd} && claude --resume ${id}` : `claude --resume ${id}`;
-    clipCopy(cmd, cmd.length > 60 ? 'resume command' : cmd);
+    clipCopy(resumeCommand(s), 'resume command');
 }
 
+/* ---------------- Detail modal ---------------- */
 function showDetail(id) {
     const s = sessions.find(x => x.session_id === id);
     if (!s) return;
-    const content = document.getElementById('detail-content');
-    content.innerHTML = `
-        <div class="modal-detail"><span class="label">Session ID:</span> <span class="session-id">${s.session_id}</span> <button class="btn btn-sm" onclick="copyResume('${s.session_id}')" style="margin-left:8px">Copy Resume Cmd</button></div>
-        <div class="modal-detail"><span class="label">Status:</span> ${s.is_active ? '<span style="color:var(--green)">ACTIVE (PID ' + s.active_pid + ')</span>' : 'Inactive'}</div>
-        <div class="modal-detail"><span class="label">Project:</span> <span class="project">${escapeHtml(s.project_path)}</span></div>
-        <div class="modal-detail"><span class="label">Working Dir:</span> ${escapeHtml(s.cwd)}</div>
-        <div class="modal-detail"><span class="label">Git Branch:</span> <span class="branch">${s.git_branch || 'N/A'}</span></div>
-        <div class="modal-detail"><span class="label">Version:</span> ${s.version || 'N/A'}</div>
-        <div class="modal-detail"><span class="label">Started:</span> ${s.started_str}</div>
-        <div class="modal-detail"><span class="label">Duration:</span> ${s.duration_str}</div>
-        <div class="modal-detail"><span class="label">Messages:</span> ${s.user_message_count} user / ${s.assistant_message_count} assistant / ${s.total_messages} total</div>
-        <div class="modal-detail"><span class="label">JSONL Size:</span> ${s.file_size_str}</div>
-        <div class="modal-detail"><span class="label">Total Size:</span> ${s.size_str}</div>
-        <hr style="border-color:var(--border);margin:12px 0">
-        <div class="modal-detail"><span class="label">Model(s):</span> ${escapeHtml(s.models_str || 'N/A')}</div>
-        <div class="modal-detail"><span class="label">Total Tokens:</span> ${s.tokens_total_str}</div>
-        ${s.total_input_tokens ? '<div class="modal-detail"><span class="label">&nbsp;&nbsp;Input:</span> ' + s.tokens_in_str + '</div>' : ''}
-        ${s.total_output_tokens ? '<div class="modal-detail"><span class="label">&nbsp;&nbsp;Output:</span> ' + s.tokens_out_str + '</div>' : ''}
-        ${s.total_cache_read_tokens ? '<div class="modal-detail"><span class="label">&nbsp;&nbsp;Cache Read:</span> ' + s.tokens_cache_read_str + ' (' + s.cache_hit_ratio_str + ' hit ratio)</div>' : ''}
-        ${s.total_cache_creation_tokens ? '<div class="modal-detail"><span class="label">&nbsp;&nbsp;Cache Write:</span> ' + s.tokens_cache_creation_str + '</div>' : ''}
-        ${s.service_tier ? '<div class="modal-detail"><span class="label">Service Tier:</span> ' + escapeHtml(s.service_tier) + '</div>' : ''}
-        ${s.web_search_count ? '<div class="modal-detail"><span class="label">Web Search:</span> ' + s.web_search_count + '</div>' : ''}
-        ${s.web_fetch_count ? '<div class="modal-detail"><span class="label">Web Fetch:</span> ' + s.web_fetch_count + '</div>' : ''}
-        ${s.pr_links && s.pr_links.length ? '<div class="modal-detail"><span class="label">PRs Created:</span> ' + s.pr_links.map(l => '<a href="' + escapeHtml(l) + '" target="_blank" style="color:var(--accent)">' + escapeHtml(l) + '</a>').join(', ') + '</div>' : ''}
-        <hr style="border-color:var(--border);margin:12px 0">
-        <div class="modal-detail"><span class="label">First Message:</span></div>
-        <div style="margin-top:8px;padding:10px;background:var(--bg);border-radius:4px;font-size:13px;white-space:pre-wrap;max-height:150px;overflow-y:auto">${escapeHtml(s.first_message || '(empty)')}</div>
-        ${s.last_user_message && s.last_user_message !== s.first_message ? '<div class="modal-detail" style="margin-top:12px"><span class="label">Last User Msg:</span></div><div style="margin-top:8px;padding:10px;background:var(--bg);border-radius:4px;font-size:13px;white-space:pre-wrap;max-height:150px;overflow-y:auto">' + escapeHtml(s.last_user_message) + '</div>' : ''}
-        ${s.last_assistant_message ? '<div class="modal-detail" style="margin-top:12px"><span class="label">Last Response:</span></div><div style="margin-top:8px;padding:10px;background:var(--bg);border-radius:4px;font-size:13px;white-space:pre-wrap;max-height:150px;overflow-y:auto;color:var(--accent)">' + escapeHtml(s.last_assistant_message) + '</div>' : ''}
-    `;
+    const meta = [];
+    if (s.is_active) meta.push(`<span class="chip-live">● live (PID ${s.active_pid})</span>`);
+    meta.push(`<span class="chip">${escapeHtml(s.project_leaf)}</span>`);
+    if (s.git_branch) meta.push(`<span class="chip-branch">${escapeHtml(s.git_branch)}</span>`);
+    meta.push(`${escapeHtml(s.when_str)} · ${escapeHtml(s.started_str)}`);
+    if (s.agent_name) meta.push(`<span class="chip-agent">agent: ${escapeHtml(s.agent_name)}</span>`);
+
+    document.getElementById('detail-head').innerHTML =
+        `<div class="m-title">${escapeHtml(s.display_title)}</div>
+         <div class="m-meta">${meta.join('')}</div>`;
+
+    const row = (label, val) => `<div class="label">${label}</div><div class="val">${val}</div>`;
+    let grid = '';
+    if (s.custom_title && s.custom_title !== s.display_title) grid += row('Name', escapeHtml(s.custom_title));
+    if (s.ai_title && s.ai_title !== s.display_title) grid += row('Summary', escapeHtml(s.ai_title));
+    grid += row('Session ID', `<span class="mono" style="font-size:11.5px">${escapeHtml(s.session_id)}</span>`);
+    grid += row('Working dir', `<span class="mono" style="font-size:11.5px">${escapeHtml(s.cwd || s.real_path)}</span>`);
+    grid += row('Version', escapeHtml(s.version || 'N/A'));
+    grid += row('Started', escapeHtml(s.started_str));
+    grid += row('Last active', escapeHtml(s.last_activity_str) + ` <span style="color:var(--text-dim)">(${escapeHtml(s.when_str)})</span>`);
+    grid += row('Active span', escapeHtml(s.duration_str) + ` <span style="color:var(--text-dim)">first → last message</span>`);
+    grid += row('Messages', `${s.user_message_count} user / ${s.assistant_message_count} assistant`);
+    grid += row('Disk size', `${escapeHtml(s.size_str)}`);
+
+    let usage = row('Model(s)', escapeHtml(s.models_str || 'N/A'));
+    usage += row('Total tokens', escapeHtml(s.tokens_total_str));
+    if (s.total_input_tokens) usage += row('Input', escapeHtml(s.tokens_in_str));
+    if (s.total_output_tokens) usage += row('Output', escapeHtml(s.tokens_out_str));
+    if (s.total_cache_read_tokens) usage += row('Cache read', `${escapeHtml(s.tokens_cache_read_str)} (${escapeHtml(s.cache_hit_ratio_str)} hit ratio)`);
+    if (s.total_cache_creation_tokens) usage += row('Cache write', escapeHtml(s.tokens_cache_creation_str));
+    if (s.service_tier) usage += row('Service tier', escapeHtml(s.service_tier));
+    if (s.web_search_count) usage += row('Web search', s.web_search_count);
+    if (s.web_fetch_count) usage += row('Web fetch', s.web_fetch_count);
+
+    const prs = (s.pr_links && s.pr_links.length)
+        ? `<div class="section-title">Pull requests</div>` + s.pr_links.map(l =>
+            `<div><a href="${escAttr(l)}" target="_blank" style="color:var(--accent)">${escapeHtml(l)}</a></div>`).join('')
+        : '';
+
+    const block = (title, text) => text
+        ? `<div class="section-title">${title}</div><div class="msg-block mono">${escapeHtml(text)}</div>` : '';
+
+    document.getElementById('detail-content').innerHTML =
+        `<div class="detail-grid">${grid}</div>
+         <div class="section-title">Usage / context</div>
+         <div class="detail-grid">${usage}</div>
+         ${prs}
+         ${block('First message', s.first_message)}
+         ${(s.last_user_message && s.last_user_message !== s.first_message) ? block('Last user message', s.last_user_message) : ''}
+         ${block('Last assistant response', s.last_assistant_message)}`;
+
+    document.getElementById('detail-resume').onclick = () => copyResume(s.session_id);
     openModal('detail-modal');
 }
 
+/* ---------------- Delete ---------------- */
 function confirmDelete(id) {
     const s = sessions.find(x => x.session_id === id);
     if (!s || s.is_active) return;
-    const content = document.getElementById('delete-content');
-    content.innerHTML = `
-        <p>Are you sure you want to delete this session?</p>
-        <div class="modal-detail"><span class="label">Project:</span> ${escapeHtml(s.project_path)}</div>
-        <div class="modal-detail"><span class="label">Topic:</span> ${escapeHtml(s.topic)}</div>
-        <div class="modal-detail"><span class="label">Date:</span> ${s.started_str}</div>
-        <div class="modal-detail"><span class="label">Size:</span> ${s.size_str}</div>
-        <p style="color:var(--red);margin-top:12px">This action cannot be undone.</p>
-    `;
-    const btn = document.getElementById('confirm-delete-btn');
-    btn.onclick = () => doDelete(id);
+    document.getElementById('delete-content').innerHTML = `
+        <div class="detail-grid">
+            <div class="label">Session</div><div class="val">${escapeHtml(s.display_title)}</div>
+            <div class="label">Project</div><div class="val">${escapeHtml(s.real_path_short)}</div>
+            <div class="label">When</div><div class="val">${escapeHtml(s.when_str)} (${escapeHtml(s.started_str)})</div>
+            <div class="label">Disk size</div><div class="val">${escapeHtml(s.size_str)}</div>
+        </div>
+        <p style="color:var(--red);margin-top:14px">This permanently deletes the transcript, tool results, and file history. Cannot be undone.</p>`;
+    document.getElementById('confirm-delete-btn').onclick = () => doDelete(id);
     openModal('delete-modal');
 }
-
 async function doDelete(id) {
     closeModal('delete-modal');
     try {
         const resp = await fetch('/api/sessions/' + id, { method: 'DELETE' });
         const data = await resp.json();
-        if (data.ok) {
-            showToast('Session deleted', 'success');
-            selected.delete(id);
-            await fetchSessions();
-        } else {
-            showToast('Error: ' + data.error, 'error');
-        }
-    } catch (e) {
-        showToast('Error: ' + e.message, 'error');
-    }
+        if (data.ok) { showToast('Session deleted', 'success'); selected.delete(id); await fetchSessions(); }
+        else showToast('Error: ' + data.error, 'error');
+    } catch (e) { showToast('Error: ' + e.message, 'error'); }
 }
-
 async function bulkDelete() {
     if (selected.size === 0) return;
-    const count = selected.size;
-    if (!confirm(`Delete ${count} selected session(s)? This cannot be undone.`)) return;
+    if (!confirm(`Delete ${selected.size} selected session(s)? This cannot be undone.`)) return;
     let deleted = 0, errors = 0;
     for (const id of [...selected]) {
         try {
             const resp = await fetch('/api/sessions/' + id, { method: 'DELETE' });
             const data = await resp.json();
-            if (data.ok) { deleted++; selected.delete(id); }
-            else errors++;
+            if (data.ok) { deleted++; selected.delete(id); } else errors++;
         } catch { errors++; }
     }
     showToast(`Deleted ${deleted} session(s)${errors ? ', ' + errors + ' error(s)' : ''}`, errors ? 'error' : 'success');
     await fetchSessions();
 }
 
+/* ---------------- Misc ---------------- */
 function openModal(id) { document.getElementById(id).classList.add('active'); }
 function closeModal(id) { document.getElementById(id).classList.remove('active'); }
 function showToast(msg, type) {
     const t = document.getElementById('toast');
-    t.textContent = msg;
-    t.className = 'toast show ' + type;
-    setTimeout(() => t.className = 'toast', 3000);
+    t.textContent = msg; t.className = 'toast show ' + (type || '');
+    clearTimeout(t._t); t._t = setTimeout(() => t.className = 'toast', 2600);
 }
 function refresh() {
-    document.getElementById('session-list').innerHTML = '<tr><td colspan="9" class="loading">Loading...</td></tr>';
+    document.getElementById('session-list').innerHTML = '<tr><td class="loading">Loading...</td></tr>';
     fetchSessions();
 }
 
-// Filter
 document.getElementById('filter').addEventListener('input', () => renderTable());
-
-// Keyboard shortcuts
+document.getElementById('proj-filter').addEventListener('input', e => { projFilter = e.target.value.toLowerCase().trim(); renderTree(); });
+document.getElementById('sort-select').addEventListener('change', e => {
+    sortKey = e.target.value;
+    sortReverse = (sortKey === 'recent' || sortKey === 'messages' || sortKey === 'size');
+    renderTable();
+});
 document.addEventListener('keydown', e => {
-    if (e.target.tagName === 'INPUT') return;
-    if (e.key === '/') { e.preventDefault(); document.getElementById('filter').focus(); }
-    if (e.key === 'Escape') {
-        closeModal('detail-modal');
-        closeModal('delete-modal');
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') {
+        if (e.key === 'Escape') e.target.blur();
+        return;
     }
+    if (e.key === '/') { e.preventDefault(); document.getElementById('filter').focus(); }
+    if (e.key === 'Escape') { closeModal('detail-modal'); closeModal('delete-modal'); }
+});
+document.querySelectorAll('.modal-overlay').forEach(ov => {
+    ov.addEventListener('click', e => { if (e.target === ov) ov.classList.remove('active'); });
 });
 
-// Initial load
 fetchSessions();
 </script>
 </body>
@@ -638,12 +681,23 @@ def _session_to_dict(s) -> dict:
         "session_id": s.session_id,
         "project_dir": s.project_dir,
         "project_path": s.project_path,
+        "real_path": s.real_path,
+        "real_path_short": s.real_path_short,
+        "project_leaf": s.project_leaf,
         "first_message": s.first_message,
         "started_at": s.started_at.isoformat() if s.started_at else None,
         "last_activity": s.last_activity.isoformat() if s.last_activity else None,
         "started_str": s.started_str,
+        "last_activity_str": s.last_activity_str,
+        "when_str": s.when_str,
         "duration_str": s.duration_str,
         "topic": s.topic,
+        "ai_title": s.ai_title,
+        "custom_title": s.custom_title,
+        "agent_name": s.agent_name,
+        "display_title": s.display_title,
+        "subtitle": s.subtitle,
+        "has_title": s.has_title,
         "user_message_count": s.user_message_count,
         "assistant_message_count": s.assistant_message_count,
         "total_messages": s.total_messages,
@@ -722,6 +776,7 @@ class SessionAPIHandler(BaseHTTPRequestHandler):
             self._send_json({
                 "sessions": [_session_to_dict(s) for s in sessions],
                 "stats": stats,
+                "tree": build_project_tree(sessions),
             })
             return
 
