@@ -6,7 +6,7 @@ No external web framework dependencies.
 
 import json
 import webbrowser
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 from .session_manager import (
@@ -177,6 +177,11 @@ tr.is-active td.c-session { border-left: 2px solid var(--green); }
 .s-title { font-size: 13.5px; color: var(--text); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 7px; }
 .s-title .live { display: inline-flex; align-items: center; gap: 4px; color: var(--green); font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; flex-shrink: 0; }
 .s-title .name-tag { flex-shrink: 0; font-size: 10px; color: var(--purple); border: 1px solid rgba(187,154,247,0.4); border-radius: 4px; padding: 0 5px; text-transform: none; letter-spacing: 0; font-weight: 500; }
+.s-title .recap-tag { flex-shrink: 0; font-size: 10px; color: var(--yellow); border: 1px solid rgba(224,175,104,0.45); border-radius: 4px; padding: 0 5px; font-weight: 500; }
+.msg-block.recap-block { border-left: 3px solid var(--accent); max-height: 260px; }
+.recap-callout { margin: 0 0 6px; padding: 11px 14px; background: rgba(122,162,247,0.09); border-left: 3px solid var(--accent); border-radius: 6px; font-size: 13px; line-height: 1.55; color: var(--text); }
+.recap-callout .recap-ico { color: var(--accent); margin-right: 7px; font-weight: 700; }
+.recap-callout .recap-lbl { color: var(--text-dim); text-transform: uppercase; font-size: 10px; letter-spacing: 0.06em; margin-right: 8px; }
 .s-sub { font-size: 11.5px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
 .c-project .proj-leaf { color: var(--accent); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .c-project .proj-branch { color: var(--orange); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -465,6 +470,7 @@ function renderTable() {
     tbody.innerHTML = filtered.map(s => {
         const checked = selected.has(s.session_id) ? 'checked' : '';
         const live = s.is_active ? `<span class="live">● live</span>` : '';
+        const recapTag = s.has_recap ? `<span class="recap-tag" title="has a recap">⟳ recap</span>` : '';
         const title = s.display_title;
         const nameTag = (s.custom_title && s.custom_title !== title) ? `<span class="name-tag" title="named session">${escapeHtml(s.custom_title)}</span>` : '';
         const sub = s.subtitle ? `<div class="s-sub" title="${escAttr(s.subtitle)}">${escapeHtml(clip(s.subtitle, 120))}</div>` : '';
@@ -481,7 +487,7 @@ function renderTable() {
             <td class="c-check" onclick="event.stopPropagation()"><input type="checkbox" ${checked} ${s.is_active ? 'disabled title="Cannot delete active session"' : ''} onchange="toggleSelect('${s.session_id}', this)"></td>
             <td class="c-when" title="${escAttr(s.last_activity_str)}">${escapeHtml(s.when_str)}</td>
             <td class="c-session">
-                <div class="s-title">${nameTag}<span style="overflow:hidden;text-overflow:ellipsis">${escapeHtml(title)}</span>${live}</div>
+                <div class="s-title">${nameTag}<span style="overflow:hidden;text-overflow:ellipsis">${escapeHtml(title)}</span>${live}${recapTag}</div>
                 ${sub}
             </td>
             ${projCell}
@@ -586,11 +592,19 @@ function showDetail(id) {
     const block = (title, text) => text
         ? `<div class="section-title">${title}</div><div class="msg-block mono">${escapeHtml(text)}</div>` : '';
 
+    const recap = s.recap
+        ? `<div class="recap-callout"><span class="recap-ico">⟳</span><span class="recap-lbl">recap</span>${escapeHtml(s.recap)}</div>` : '';
+    const compact = s.compact_summary
+        ? `<div class="section-title">Continued-conversation summary</div>
+           <div class="msg-block recap-block">${escapeHtml(s.compact_summary)}</div>` : '';
+
     document.getElementById('detail-content').innerHTML =
-        `<div class="detail-grid">${grid}</div>
+        `${recap}
+         <div class="detail-grid">${grid}</div>
          <div class="section-title">Usage / context</div>
          <div class="detail-grid">${usage}</div>
          ${prs}
+         ${compact}
          ${block('First message', s.first_message)}
          ${(s.last_user_message && s.last_user_message !== s.first_message) ? block('Last user message', s.last_user_message) : ''}
          ${block('Last assistant response', s.last_assistant_message)}`;
@@ -695,6 +709,10 @@ def _session_to_dict(s) -> dict:
         "ai_title": s.ai_title,
         "custom_title": s.custom_title,
         "agent_name": s.agent_name,
+        "recap": s.recap,
+        "has_recap": s.has_recap,
+        "compact_summary": s.compact_summary,
+        "has_compact_summary": s.has_compact_summary,
         "display_title": s.display_title,
         "subtitle": s.subtitle,
         "has_title": s.has_title,
@@ -738,6 +756,7 @@ class SessionAPIHandler(BaseHTTPRequestHandler):
     """HTTP request handler for the session manager API and web UI."""
 
     sessions_cache: list | None = None
+    root: str | None = None  # optional scope filter (set by run_web)
 
     def log_message(self, format, *args):
         # Suppress default logging
@@ -760,7 +779,7 @@ class SessionAPIHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _refresh_cache(self):
-        SessionAPIHandler.sessions_cache = discover_sessions()
+        SessionAPIHandler.sessions_cache = discover_sessions(SessionAPIHandler.root)
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -788,7 +807,7 @@ class SessionAPIHandler(BaseHTTPRequestHandler):
         # /api/sessions/<session_id>
         if parsed.path.startswith("/api/sessions/"):
             session_id = parsed.path.split("/")[-1]
-            sessions = SessionAPIHandler.sessions_cache or discover_sessions()
+            sessions = SessionAPIHandler.sessions_cache or discover_sessions(SessionAPIHandler.root)
             session = next((s for s in sessions if s.session_id == session_id), None)
 
             if not session:
@@ -813,9 +832,15 @@ class SessionAPIHandler(BaseHTTPRequestHandler):
         self.send_error(404, "Not found")
 
 
-def run_web(port: int = 8420, open_browser: bool = True):
-    """Start the web UI server."""
-    server = HTTPServer(("127.0.0.1", port), SessionAPIHandler)
+def run_web(port: int = 8420, open_browser: bool = True, root: str | None = None):
+    """Start the web UI server.
+
+    Threaded so multiple browser tabs (or keep-alive connections) don't block
+    each other on the single-threaded default server. ``root`` optionally scopes
+    discovery to sessions under a directory.
+    """
+    SessionAPIHandler.root = root
+    server = ThreadingHTTPServer(("127.0.0.1", port), SessionAPIHandler)
     url = f"http://127.0.0.1:{port}"
     print(f"Claude Sessions Manager - Web UI")
     print(f"Listening on {url}")

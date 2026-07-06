@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 
+from rich.markup import escape
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -84,8 +85,8 @@ class ConfirmDeleteScreen(ModalScreen[bool]):
         s = self.session
         with Container(id="confirm-dialog"):
             yield Label("[bold red]Delete this session?[/]")
-            yield Label(f"[bold]Session:[/] {s.display_title}")
-            yield Label(f"[bold]Project:[/] {s.real_path_short}")
+            yield Label(f"[bold]Session:[/] {escape(s.display_title)}")
+            yield Label(f"[bold]Project:[/] {escape(s.real_path_short)}")
             yield Label(f"[bold]When:[/]    {s.when_str} ({s.started_str})")
             yield Label(f"[bold]Size:[/]    {s.size_str}")
             yield Label("")
@@ -142,18 +143,22 @@ class SessionDetailScreen(ModalScreen):
         s = self.session
         active_str = f"[bold green]● live[/] (PID {s.active_pid})" if s.is_active else "[dim]inactive[/]"
         with VerticalScroll(id="detail-dialog"):
-            yield Label(s.display_title, id="detail-title")
+            yield Label(s.display_title, id="detail-title", markup=False)
             meta = f"{s.project_leaf} · {s.git_branch or 'no branch'} · {s.when_str} · {s.started_str}"
             if s.agent_name:
                 meta += f" · agent: {s.agent_name}"
-            yield Label(meta, id="detail-meta")
+            yield Label(meta, id="detail-meta", markup=False)
+            if s.recap:
+                yield Label("[bold cyan]⟳ Recap[/]")
+                yield Label(s.recap, markup=False)
+                yield Label("")
             yield Label(f"[bold]Status:[/]      {active_str}")
             if s.custom_title and s.custom_title != s.display_title:
-                yield Label(f"[bold]Name:[/]        {s.custom_title}")
+                yield Label(f"[bold]Name:[/]        {escape(s.custom_title)}")
             if s.ai_title and s.ai_title != s.display_title:
-                yield Label(f"[bold]Summary:[/]     {s.ai_title}")
+                yield Label(f"[bold]Summary:[/]     {escape(s.ai_title)}")
             yield Label(f"[bold]Session ID:[/]  {s.session_id}")
-            yield Label(f"[bold]Working Dir:[/] {s.cwd or s.real_path}")
+            yield Label(f"[bold]Working Dir:[/] {escape(s.cwd or s.real_path)}")
             yield Label(f"[bold]Version:[/]     {s.version or 'N/A'}")
             yield Label("")
             yield Label(f"[bold]Started:[/]     {s.started_str}")
@@ -161,9 +166,13 @@ class SessionDetailScreen(ModalScreen):
             yield Label(f"[bold]Active span:[/] {s.duration_str}  [dim]first → last message[/]")
             yield Label(f"[bold]Messages:[/]    {s.user_message_count} user / {s.assistant_message_count} assistant")
             yield Label(f"[bold]Disk size:[/]   {s.size_str}")
+            if s.compact_summary:
+                yield Label("")
+                yield Label("[bold underline]Continued-conversation summary[/]")
+                yield Label(s.compact_summary, markup=False)
             yield Label("")
             yield Label("[bold underline]Usage / Context[/]")
-            yield Label(f"[bold]Model(s):[/]      {s.models_str}")
+            yield Label(f"[bold]Model(s):[/]      {escape(s.models_str)}")
             yield Label(f"[bold]Total Tokens:[/]  {s.tokens_total_str}")
             if s.total_input_tokens:
                 yield Label(f"[bold]  Input:[/]       {s.tokens_in_str}")
@@ -177,7 +186,7 @@ class SessionDetailScreen(ModalScreen):
             if s.total_cache_creation_tokens:
                 yield Label(f"[bold]  Cache Write:[/] {s.tokens_cache_creation_str}")
             if s.service_tier:
-                yield Label(f"[bold]Service Tier:[/]  {s.service_tier}")
+                yield Label(f"[bold]Service Tier:[/]  {escape(s.service_tier)}")
             if s.web_search_count:
                 yield Label(f"[bold]Web Search:[/]    {s.web_search_count}")
             if s.web_fetch_count:
@@ -186,18 +195,18 @@ class SessionDetailScreen(ModalScreen):
                 yield Label("")
                 yield Label("[bold]PRs Created:[/]")
                 for pr in s.pr_links:
-                    yield Label(f"  {pr}")
+                    yield Label(f"  {pr}", markup=False)
             yield Label("")
             yield Label("[bold]First Message:[/]")
-            yield Label(s.first_message or "(empty)")
+            yield Label(s.first_message or "(empty)", markup=False)
             if s.last_user_message and s.last_user_message != s.first_message:
                 yield Label("")
                 yield Label("[bold]Last User Message:[/]")
-                yield Label(s.last_user_message)
+                yield Label(s.last_user_message, markup=False)
             if s.last_assistant_message:
                 yield Label("")
                 yield Label("[bold]Last Assistant Response:[/]")
-                yield Label(s.last_assistant_message)
+                yield Label(s.last_assistant_message, markup=False)
             yield Label("")
             yield Label("[dim]Press Esc/Enter/q to close · c copy resume · o open[/]")
 
@@ -255,6 +264,9 @@ class HelpScreen(ModalScreen):
             yield Label("[bold]Other[/]", classes="help-row")
             yield Label("  [bold cyan]?[/]          Show this help", classes="help-row")
             yield Label("  [bold cyan]q[/]          Quit", classes="help-row")
+            yield Label("")
+            yield Label("[bold]Legend[/]", classes="help-row")
+            yield Label("  [green]●[/] active    [yellow]⟳[/] has recap    [magenta]name[/] custom name    [yellow]⑂[/] worktree", classes="help-row")
             yield Label("")
             yield Label("[dim]Press Esc/q/? to close[/]")
 
@@ -341,8 +353,9 @@ class SessionManagerApp(App):
         ("title", "title"),
     ]
 
-    def __init__(self) -> None:
+    def __init__(self, root: str | None = None) -> None:
         super().__init__()
+        self.root = root
         self.sessions: list[SessionInfo] = []
         self.filtered_sessions: list[SessionInfo] = []
         self.filter_text: str = ""
@@ -374,7 +387,7 @@ class SessionManagerApp(App):
         self.query_one("#project-tree", Tree).focus()
 
     def _load_sessions(self) -> None:
-        self.sessions = discover_sessions()
+        self.sessions = discover_sessions(self.root)
         self._rebuild_tree()
         self._apply_filter()
         self._update_stats()
@@ -391,16 +404,16 @@ class SessionManagerApp(App):
         for area in build_project_tree(self.sessions):
             adot = " [green]●[/]" if area["active"] else ""
             area_node = root.add(
-                f"[bold]{area['name']}[/]{adot}  [dim]{area['count']}[/]",
+                f"[bold]{escape(area['name'])}[/]{adot}  [dim]{area['count']}[/]",
                 data={"path": area["path"], "group": True},
             )
             for leaf in area["children"]:
                 ldot = " [green]●[/]" if leaf["active"] else ""
                 root_tag = " [dim]root[/]" if leaf["is_root"] else ""
                 worktree = " [yellow]⑂[/]" if leaf["worktree"] else ""
-                hint = f" [dim]{leaf['hint']}[/]" if leaf["hint"] else ""
+                hint = f" [dim]{escape(leaf['hint'])}[/]" if leaf["hint"] else ""
                 area_node.add_leaf(
-                    f"{leaf['name']}{worktree}{root_tag}{hint}{ldot}  [dim]{leaf['count']}[/]",
+                    f"{escape(leaf['name'])}{worktree}{root_tag}{hint}{ldot}  [dim]{leaf['count']}[/]",
                     data={"path": leaf["path"], "group": False},
                 )
             area_node.expand()
@@ -478,17 +491,22 @@ class SessionManagerApp(App):
 
         prev_path = None
         for s in self.filtered_sessions:
-            status = "[green]●[/]" if s.is_active else " "
-            title = _clip(s.display_title, 62)
+            if s.is_active:
+                status = "[green]●[/]"
+            elif s.has_recap:
+                status = "[yellow]⟳[/]"
+            else:
+                status = " "
+            title = escape(_clip(s.display_title, 62))
             if s.custom_title and s.custom_title != s.display_title:
-                title = f"[magenta]{_clip(s.custom_title, 18)}[/][dim] · [/]{_clip(s.display_title, 40)}"
+                title = f"[magenta]{escape(_clip(s.custom_title, 18))}[/][dim] · [/]{escape(_clip(s.display_title, 40))}"
             row = [status, s.when_str, title]
             if show_project:
                 if s.real_path == prev_path:
                     row.append("[dim]  ↳[/]")
                 else:
-                    row.append(f"[blue]{_clip(s.project_leaf, 20)}[/]")
-            row.append(s.git_branch or "-")
+                    row.append(f"[blue]{escape(_clip(s.project_leaf, 20))}[/]")
+            row.append(escape(s.git_branch or "-"))
             row.append(str(s.total_messages))
             prev_path = s.real_path
             # jsonl_path is unique per session file; session_id can collide when
@@ -505,7 +523,7 @@ class SessionManagerApp(App):
             f"{stats['total_projects']} projects | "
             f"[green]{stats['active_sessions']} active[/] | "
             f"[dim]{stats['total_size']}[/] | "
-            f"View: {_clip(self.selected_label, 24)} ({len(self.filtered_sessions)}) | "
+            f"View: {escape(_clip(self.selected_label, 24))} ({len(self.filtered_sessions)}) | "
             f"Sort: {sort_label} {arrow}"
         )
 
@@ -668,6 +686,6 @@ class SessionManagerApp(App):
             self._set_status(f"Error deleting: {e}")
 
 
-def run_tui():
-    app = SessionManagerApp()
+def run_tui(root: str | None = None):
+    app = SessionManagerApp(root=root)
     app.run()

@@ -18,6 +18,28 @@ def humanize_snippet(text: str) -> str:
     return " ".join(text.split())
 
 
+_RECAP_LEAD = "This session is being continued from a previous conversation that ran out of context."
+_RECAP_FOLLOW = "The summary below covers the earlier portion of the conversation."
+
+
+def _clean_recap(text: str) -> str:
+    """Strip the standard compaction boilerplate lead-in from a recap."""
+    t = text.strip()
+    if t.startswith(_RECAP_LEAD):
+        t = t[len(_RECAP_LEAD):].lstrip()
+        if t.startswith(_RECAP_FOLLOW):
+            t = t[len(_RECAP_FOLLOW):].lstrip()
+    return t[:20000]
+
+
+_RECAP_HINT_RE = re.compile(r"\s*\(disable recaps in /config\)\s*$")
+
+
+def _clean_recap_line(text: str) -> str:
+    """Strip the trailing '(disable recaps in /config)' hint from a running recap."""
+    return _RECAP_HINT_RE.sub("", " ".join(text.split())).strip()
+
+
 def relative_time(dt: Optional[datetime]) -> str:
     """Human 'time ago' string, falling back to an absolute date for old items."""
     if not dt:
@@ -71,6 +93,8 @@ class SessionInfo:
     ai_title: str = ""  # AI-generated one-line summary of the session
     custom_title: str = ""  # user-assigned name for the session
     agent_name: str = ""  # name of the agent, when run as a named agent
+    recap: str = ""  # short running recap ("away_summary"), latest wins
+    compact_summary: str = ""  # long compaction/continuation summary
     last_user_message: str = ""
     last_assistant_message: str = ""
     last_prompt: str = ""
@@ -225,12 +249,24 @@ class SessionInfo:
         return bool(self.custom_title or self.ai_title)
 
     @property
-    def subtitle(self) -> str:
-        """Secondary context line: the raw first prompt, for extra context.
+    def has_recap(self) -> bool:
+        """True when the session carries a short running recap."""
+        return bool(self.recap)
 
-        Suppressed when it would merely echo the title (the AI summary is usually
-        derived from the first message, so the two are frequently near-duplicates).
+    @property
+    def has_compact_summary(self) -> bool:
+        """True when the session carries a long compaction/continuation summary."""
+        return bool(self.compact_summary)
+
+    @property
+    def subtitle(self) -> str:
+        """Secondary context line.
+
+        Prefers the short running recap (what was done + what's next); otherwise
+        the raw first prompt. Suppressed when it would merely echo the title.
         """
+        if self.recap:
+            return self.recap
         candidate = self._clean_first_message()
         if not candidate:
             return ""
@@ -319,6 +355,8 @@ def _parse_session_jsonl(jsonl_path: Path, max_lines: int = 200) -> dict:
         "ai_title": "",
         "custom_title": "",
         "agent_name": "",
+        "recap": "",  # short "away_summary" running recap (latest wins)
+        "compact_summary": "",  # long compaction/continuation summary
         "last_user_message": "",
         "last_assistant_message": "",
         "last_prompt": "",
@@ -380,9 +418,17 @@ def _parse_session_jsonl(jsonl_path: Path, max_lines: int = 200) -> dict:
                         texts.append(block)
                 content_text = " ".join(texts).strip()
 
-            # Skip auto-generated messages (hooks, commands, skills) for topic
+            # Compaction summaries are the session "recap" that Claude Code
+            # generates when a conversation runs out of context. Capture it
+            # (latest wins) but keep it out of the first/last user message.
+            is_compact_summary = bool(entry.get("isCompactSummary"))
+            if is_compact_summary and content_text:
+                result["compact_summary"] = _clean_recap(content_text)
+
+            # Skip auto-generated messages (hooks, commands, skills, recaps) for topic
             is_auto = (
-                content_text.startswith("<local-command")
+                is_compact_summary
+                or content_text.startswith("<local-command")
                 or content_text.startswith("<command-")
                 or content_text.startswith("<bash-input>")
                 or content_text.startswith("<bash-stdout>")
@@ -451,6 +497,11 @@ def _parse_session_jsonl(jsonl_path: Path, max_lines: int = 200) -> dict:
             slug = entry.get("slug")
             if slug:
                 result["slug"] = slug
+            # Claude Code's periodic running recap ("away_summary"); latest wins.
+            if entry.get("subtype") == "away_summary":
+                content = entry.get("content")
+                if isinstance(content, str) and content.strip():
+                    result["recap"] = _clean_recap_line(content)
 
         elif entry_type == "ai-title":
             # Metadata entries were previously counted via the catch-all below;
@@ -489,10 +540,18 @@ def _parse_session_jsonl(jsonl_path: Path, max_lines: int = 200) -> dict:
     return result
 
 
-def discover_sessions() -> list[SessionInfo]:
-    """Discover all Claude Code sessions across all projects."""
+def discover_sessions(root: Optional[str] = None) -> list[SessionInfo]:
+    """Discover all Claude Code sessions across all projects.
+
+    If ``root`` is given, only sessions whose real working directory is that
+    path or nested beneath it are returned (a read-only scope filter).
+    """
     sessions = []
     active_map = _get_active_sessions()
+
+    root_norm = None
+    if root:
+        root_norm = os.path.abspath(os.path.expanduser(root)).rstrip("/")
 
     if not PROJECTS_DIR.is_dir():
         return sessions
@@ -547,6 +606,8 @@ def discover_sessions() -> list[SessionInfo]:
                 ai_title=metadata["ai_title"],
                 custom_title=metadata["custom_title"],
                 agent_name=metadata["agent_name"],
+                recap=metadata["recap"],
+                compact_summary=metadata["compact_summary"],
                 last_user_message=metadata["last_user_message"],
                 last_assistant_message=metadata["last_assistant_message"],
                 last_prompt=metadata["last_prompt"],
@@ -560,6 +621,12 @@ def discover_sessions() -> list[SessionInfo]:
                 web_fetch_count=metadata["web_fetch_count"],
                 service_tier=metadata["service_tier"],
             )
+
+            if root_norm is not None:
+                rp = session.real_path.rstrip("/")
+                if rp != root_norm and not rp.startswith(root_norm + "/"):
+                    continue
+
             sessions.append(session)
 
     # Sort by most recent first

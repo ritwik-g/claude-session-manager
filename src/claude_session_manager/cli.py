@@ -13,15 +13,16 @@ import argparse
 import sys
 
 
-def list_sessions():
+def list_sessions(root=None):
     """Print a quick session list to stdout."""
     from rich.console import Console
+    from rich.markup import escape
     from rich.table import Table
 
     from .session_manager import discover_sessions, get_summary_stats
 
     console = Console()
-    sessions = discover_sessions()
+    sessions = discover_sessions(root)
     stats = get_summary_stats(sessions)
 
     console.print(f"\n[bold blue]Claude Sessions Manager[/]")
@@ -41,16 +42,16 @@ def list_sessions():
     table.add_column("Msgs", justify="right", no_wrap=True)
 
     for s in sessions:
-        status = "[green]>[/]" if s.is_active else " "
-        title = s.display_title
+        status = "[green]>[/]" if s.is_active else ("[yellow]⟳[/]" if s.has_recap else " ")
+        title = escape(s.display_title)
         if s.custom_title and s.custom_title != s.display_title:
-            title = f"[magenta]{s.custom_title}[/] [dim]·[/] {s.display_title}"
+            title = f"[magenta]{escape(s.custom_title)}[/] [dim]·[/] {escape(s.display_title)}"
         table.add_row(
             status,
             s.when_str,
             title,
-            s.project_leaf,
-            s.git_branch or "-",
+            escape(s.project_leaf),
+            escape(s.git_branch or "-"),
             str(s.total_messages),
         )
 
@@ -58,17 +59,18 @@ def list_sessions():
     console.print()
 
 
-def show_stats():
+def show_stats(root=None):
     """Print aggregate stats."""
     from collections import defaultdict
 
     from rich.console import Console
+    from rich.markup import escape
     from rich.panel import Panel
 
     from .session_manager import _format_size, discover_sessions, get_summary_stats
 
     console = Console()
-    sessions = discover_sessions()
+    sessions = discover_sessions(root)
     stats = get_summary_stats(sessions)
 
     project_stats = defaultdict(lambda: {"count": 0, "size": 0})
@@ -90,7 +92,7 @@ def show_stats():
     for proj, ps in sorted_projects:
         n = ps["count"]
         noun = "session" if n == 1 else "sessions"
-        lines.append(f"  {proj}: {n} {noun}, {_format_size(ps['size'])}")
+        lines.append(f"  {escape(proj)}: {n} {noun}, {_format_size(ps['size'])}")
 
     console.print(Panel("\n".join(lines), title="[bold blue]Claude Sessions Stats[/]", border_style="blue"))
 
@@ -107,16 +109,23 @@ def main():
     parser.add_argument("--no-browser", action="store_true", help="Don't auto-open browser (web mode)")
     parser.add_argument("--list", action="store_true", help="Quick list sessions in terminal")
     parser.add_argument("--stats", action="store_true", help="Show aggregate stats")
+    parser.add_argument(
+        "--path",
+        type=str,
+        default=None,
+        metavar="DIR",
+        help="Only show sessions whose working directory is under DIR",
+    )
 
     args = parser.parse_args()
 
     if args.list:
-        list_sessions()
+        list_sessions(root=args.path)
     elif args.stats:
-        show_stats()
+        show_stats(root=args.path)
     elif args.web:
         from .web_ui import run_web
-        run_web(port=args.port, open_browser=not args.no_browser)
+        run_web(port=args.port, open_browser=not args.no_browser, root=args.path)
     else:
         from .tui import run_tui
-        run_tui()
+        run_tui(root=args.path)
